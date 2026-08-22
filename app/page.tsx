@@ -2,8 +2,38 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-const frozenPrompt =
+const defaultPrompt =
   "Analyze the Brazilian municipal agricultural production database. Identify the most relevant changes in planted area, production, yield, and production value, then present evidence-backed business insights.";
+
+const promptPresets = [
+  {
+    id: "benchmark",
+    label: "Benchmark Default",
+    description: "Standard PAM 2019-2024 analysis across 7 crops",
+    prompt: defaultPrompt,
+  },
+  {
+    id: "grains",
+    label: "Grains Focus (Soy, Corn, Wheat)",
+    description: "Compare yield efficiency vs acreage growth in key grain crops",
+    prompt:
+      "Focus specifically on grain production dynamics (soybeans, corn, and wheat) between 2019 and 2024. Compare yield efficiency (kg/ha) vs planted area expansion and identify market saturation and land allocation patterns.",
+  },
+  {
+    id: "value",
+    label: "Production Value Surge",
+    description: "Investigate nominal value growth vs physical output",
+    prompt:
+      "Analyze the dramatic surge in production value (thousand BRL) across all Brazilian crops from 2019 to 2024. Reconcile whether value gains were driven by volume growth or nominal commodity pricing.",
+  },
+  {
+    id: "productivity",
+    label: "Productivity & Yield Gains",
+    description: "Analyze agricultural technological efficiency",
+    prompt:
+      "Evaluate agricultural productivity gains (yield in kg/ha) between 2019 and 2024 across all commodities. Which crops demonstrated real technological/efficiency gains versus pure acreage expansion?",
+  },
+];
 
 const gates = ["Schema", "Python", "SQL", "Agreement", "Provenance", "Visual"];
 
@@ -78,12 +108,15 @@ function AgentNode({ id, title, detail, active = false }: { id: string; title: s
 }
 
 export default function Home() {
+  const [prompt, setPrompt] = useState(defaultPrompt);
   const [runState, setRunState] = useState<RunState>("idle");
   const [runMessage, setRunMessage] = useState("Awaiting a connected model and graph runtime.");
   const [connection, setConnection] = useState<ConnectionState>("checking");
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
+
+  const isCustom = prompt.trim() !== defaultPrompt.trim();
 
   const checkModel = useCallback(async () => {
     setConnection("checking");
@@ -137,13 +170,14 @@ export default function Home() {
   }, [runId, runState]);
 
   async function runGraph() {
+    if (prompt.trim().length < 20) return;
     setRunState("submitting");
-    setRunMessage("Validating the frozen contract and creating graph state…");
+    setRunMessage("Validating prompt and initializing LangGraph state…");
     try {
       const response = await fetch("/api/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: frozenPrompt, provider: "local-qwen" }),
+        body: JSON.stringify({ prompt: prompt.trim(), provider: "local-qwen" }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "The runtime rejected this run.");
@@ -159,7 +193,10 @@ export default function Home() {
 
   const modelLabel =
     connection === "checking" ? "Checking local endpoint" : modelStatus?.model ?? "Model server unreachable";
-  const canRun = connection === "connected" && !["submitting", "accepted", "running"].includes(runState);
+  const canRun =
+    connection === "connected" &&
+    prompt.trim().length >= 20 &&
+    !["submitting", "accepted", "running"].includes(runState);
   const latestNode = runEvents.at(-1)?.node;
   const gateStatus = (gate: string) => {
     const events = runEvents.filter((event) => event.node === gateNodes[gate]);
@@ -226,11 +263,53 @@ export default function Home() {
         <section className="workbench">
           <article className="card prompt-card">
             <div className="card-head">
-              <div><span className="card-index">01</span><div><small>CONTROLLED INPUT</small><h3>Business prompt</h3></div></div>
-              <span className="tag">CONTRACT V1.0 · LOCKED</span>
+              <div><span className="card-index">01</span><div><small>INPUT CONTRACT</small><h3>Business prompt</h3></div></div>
+              <span className={`tag ${isCustom ? "tag-custom" : ""}`}>
+                {isCustom ? "CUSTOM PROMPT · EDITABLE" : "BENCHMARK V1.0 · DEFAULT"}
+              </span>
             </div>
-            <label className="sr-only" htmlFor="business-prompt">Frozen business prompt</label>
-            <textarea id="business-prompt" value={frozenPrompt} readOnly />
+
+            <div className="preset-selector">
+              <small>ANALYTICAL PRESETS:</small>
+              <div className="preset-chips">
+                {promptPresets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={`preset-chip ${prompt === preset.prompt ? "active" : ""}`}
+                    onClick={() => setPrompt(preset.prompt)}
+                    title={preset.description}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+                {isCustom && (
+                  <button
+                    type="button"
+                    className="preset-chip reset-chip"
+                    onClick={() => setPrompt(defaultPrompt)}
+                    title="Reset to benchmark default"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <label className="sr-only" htmlFor="business-prompt">Business research prompt</label>
+            <textarea
+              id="business-prompt"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Enter your custom agricultural research prompt (minimum 20 characters)..."
+              disabled={["submitting", "accepted", "running"].includes(runState)}
+            />
+            <div className="prompt-footer">
+              <small>
+                {prompt.trim().length} / 20,000 chars {prompt.trim().length < 20 ? "(minimum 20 chars required)" : ""}
+              </small>
+            </div>
+
             <div className="prompt-meta">
               <div><small>PROVIDER</small><strong>Local Qwen</strong><span>OpenAI-compatible API</span></div>
               <div><small>DATA SCOPE</small><strong>IBGE PAM</strong><span>Municipal · 2019–2024</span></div>
