@@ -55,7 +55,7 @@ def get_settings() -> Settings:
         model_id=os.getenv("MODEL_ID", "qwen/qwen3.6-35b-a3b"),
         model_api_key=os.getenv("MODEL_API_KEY"),
         model_timeout_seconds=float(os.getenv("MODEL_TIMEOUT_SECONDS", "180")),
-        max_completion_tokens=int(os.getenv("MAX_COMPLETION_TOKENS", "4096")),
+        max_completion_tokens=int(os.getenv("MAX_COMPLETION_TOKENS", "8192")),
         temperature=float(os.getenv("MODEL_TEMPERATURE", "0")),
         dataset_path=_path_from_env("DATASET_PATH", REPOSITORY_ROOT / "data/agriculture.duckdb"),
         artifacts_dir=_path_from_env("ARTIFACTS_DIR", REPOSITORY_ROOT / "outputs/runs"),

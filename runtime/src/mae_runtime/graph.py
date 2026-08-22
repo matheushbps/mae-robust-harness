@@ -128,11 +128,18 @@ class _GraphRun:
                 )
         raise RuntimeError(f"{role_id} exhausted structured-output retries") from last_error
 
-    def _text_call(self, role_id: str, user: str) -> tuple[str, dict[str, Any]]:
+    def _text_call(
+        self, role_id: str, user: str, max_tokens: int | None = None
+    ) -> tuple[str, dict[str, Any]]:
         last_error: Exception | None = None
         for attempt in range(self.settings.max_repair_attempts + 1):
             try:
-                trace = self.model.complete(role_id, self._system_prompt(role_id), user)
+                trace = self.model.complete(
+                    role_id,
+                    self._system_prompt(role_id),
+                    user,
+                    max_tokens=max_tokens or self.settings.max_completion_tokens,
+                )
                 if not trace.content.strip():
                     raise ValueError("Model returned empty visible content.")
                 return trace.content.strip(), self._trace_metadata(trace)
@@ -347,11 +354,15 @@ class _GraphRun:
         evidence = state.get("approved_evidence", [])
         report, trace = self._text_call(
             node,
-            "Write a concise executive analysis. Cite evidence IDs in brackets after every material number. "
+            "Write a concise executive analysis synthesizing the 2019–2024 agricultural "
+            "dynamics across all analyzed crops. "
+            "Cite evidence IDs in brackets after every material number (e.g. [sql:40099:production_tonnes]). "
+            "Organize into: 1. Executive Summary, 2. Key Crop Shifts, 3. Strategic Business Implications. "
             "If validation failed, explain the failure instead of presenting unsupported conclusions.\n"
             f"REQUEST:\n{state['prompt']}\nSTATUS:\n{state.get('terminal_status', 'completed')}\n"
             f"FAILURE:\n{state.get('failure_reason', '')}\nAPPROVED EVIDENCE:\n"
-            f"{json.dumps(evidence[:20])}",
+            f"{json.dumps(evidence)}",
+            max_tokens=self.settings.max_completion_tokens,
         )
         terminal_status = state.get("terminal_status", "completed")
         # Update dashboard artifact to embed final narrative
