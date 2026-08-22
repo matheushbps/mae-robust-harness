@@ -282,6 +282,29 @@ export default function Home() {
               <div><span>RUN ID</span><strong>{runId ?? "Not started"}</strong></div>
               <div><span>EVENTS</span><strong>{runEvents.length} graph events</strong></div>
             </div>
+            {runId && (
+              <div style={{ marginTop: "1.25rem", paddingTop: "1rem", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <a
+                  href={`/api/run-artifact?run_id=${runId}&file=dashboard.html`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="primary-action"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    textDecoration: "none",
+                    fontSize: "0.85rem",
+                    padding: "0.5rem 1rem",
+                    borderRadius: "6px",
+                    width: "100%",
+                    justifyContent: "center",
+                  }}
+                >
+                  Open Interactive HTML Dashboard <ArrowIcon />
+                </a>
+              </div>
+            )}
           </article>
 
           <article className="card data-card">

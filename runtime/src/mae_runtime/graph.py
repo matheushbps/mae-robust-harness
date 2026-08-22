@@ -307,7 +307,12 @@ class _GraphRun:
         )
         evidence = [EvidenceItem.model_validate(item) for item in state["approved_evidence"]]
         checks = [ValidationCheck.model_validate(item) for item in state["validation_checks"]]
-        path = write_dashboard_artifact(self.output_dir, evidence, checks)
+        path = write_dashboard_artifact(
+            self.output_dir,
+            evidence,
+            checks,
+            metadata={"harness": "Robust Harness (Condition B)", "run_id": self.run_id},
+        )
         self.emit(node, "completed", "Dashboard contract artifact created.", {"artifact": str(path)})
         return {"dashboard_path": str(path)}
 
@@ -349,6 +354,18 @@ class _GraphRun:
             f"{json.dumps(evidence[:20])}",
         )
         terminal_status = state.get("terminal_status", "completed")
+        # Update dashboard artifact to embed final narrative
+        evidence_items = [EvidenceItem.model_validate(item) for item in evidence]
+        validation_items = [
+            ValidationCheck.model_validate(item) for item in state.get("validation_checks", [])
+        ]
+        write_dashboard_artifact(
+            self.output_dir,
+            evidence_items,
+            validation_items,
+            narrative=report,
+            metadata={"harness": "Robust Harness (Condition B)", "run_id": self.run_id},
+        )
         self.emit(node, "completed", "Final report created.", {"terminal_status": terminal_status})
         return {
             "final_report": report,

@@ -4,7 +4,8 @@ import asyncio
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Response, status
+from fastapi.responses import HTMLResponse
 
 from .config import get_settings
 from .contracts import RunRequest
@@ -115,6 +116,34 @@ def get_run_events(run_id: str, after: int = 0) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.") from error
     events = [event.model_dump(mode="json") for event in record.events if event.sequence > after]
     return {"run_id": run_id, "status": record.status, "events": events}
+
+
+@app.get("/runs/{run_id}/dashboard.html", response_class=HTMLResponse)
+def get_run_dashboard_html(run_id: str) -> HTMLResponse:
+    artifact_path = settings.artifacts_dir / run_id / "dashboard.html"
+    if not artifact_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dashboard HTML artifact not found for run {run_id}.",
+        )
+    return HTMLResponse(content=artifact_path.read_text(encoding="utf-8"))
+
+
+@app.get("/runs/{run_id}/artifacts/{filename}")
+def get_run_artifact(run_id: str, filename: str) -> Response:
+    if ".." in filename or filename.startswith("/") or "\\" in filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename.")
+    artifact_path = settings.artifacts_dir / run_id / filename
+    if not artifact_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Artifact {filename} not found for run {run_id}.",
+        )
+    if filename.endswith(".html"):
+        return HTMLResponse(content=artifact_path.read_text(encoding="utf-8"))
+    if filename.endswith(".json"):
+        return Response(content=artifact_path.read_text(encoding="utf-8"), media_type="application/json")
+    return Response(content=artifact_path.read_bytes())
 
 
 def main() -> None:

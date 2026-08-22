@@ -161,3 +161,16 @@ def test_robust_langgraph_completes_with_checkpoints(dataset_path: Path, tmp_pat
     assert ("sql_analyst", "started") in events
     assert ("python_analyst", "started") in events
     assert "evidence_reconciliation" in GRAPH_MERMAID
+
+    # Verify generated artifacts including HTML dashboard
+    run_dir = settings.artifacts_dir / "robust-test"
+    json_dashboard = run_dir / "dashboard.json"
+    html_dashboard = run_dir / "dashboard.html"
+    assert json_dashboard.exists() and json_dashboard.stat().st_size > 0
+    assert html_dashboard.exists() and html_dashboard.stat().st_size > 0
+    html_text = html_dashboard.read_text(encoding="utf-8")
+    assert "<!DOCTYPE html>" in html_text
+    assert "id=\"kpis\"" in html_text
+    assert "id=\"charts\"" in html_text
+    assert "id=\"evidence-ledger\"" in html_text
+    assert "Approved Evidence & Provenance Ledger" in html_text

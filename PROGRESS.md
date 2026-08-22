@@ -16,6 +16,11 @@
 - Shared 109,065-row public-data snapshot and hash preflight.
 - Five measured robust runs completed and preserved.
 - Machine-scored benchmark report with the final-output saturation failure documented.
+- Self-contained, interactive HTML dashboard generation (`render_dashboard_html`) with KPI cards, multi-crop charts, evidence ledger table, and cited narrative.
+- Enhanced visual validation gate (`validate_dashboard`) verifying HTML artifact presence, size, and DOM structure.
+- Runtime FastAPI artifact routes (`GET /runs/{run_id}/dashboard.html` and `GET /runs/{run_id}/artifacts/{filename}`) and Next.js frontend proxy (`/api/run-artifact`).
+- Direct "Open Interactive HTML Dashboard" button added to both harness consoles.
+- Backfilled HTML dashboards for all historical benchmark pairs and run output folders.
 
 ## Next
 
