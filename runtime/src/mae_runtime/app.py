@@ -27,7 +27,7 @@ app = FastAPI(
 )
 
 
-def _execute_run(run_id: str, prompt: str) -> None:
+def _execute_run(run_id: str, prompt: str, agent_prompts: dict[str, str] | None = None) -> None:
     store.update(run_id, status="running")
 
     def emit(
@@ -39,7 +39,7 @@ def _execute_run(run_id: str, prompt: str) -> None:
         store.append_event(run_id, node, event_type, message, data)
 
     try:
-        result = harness.run(run_id, prompt, emit)
+        result = harness.run(run_id, prompt, emit, agent_prompts=agent_prompts)
         terminal_failed = result.get("terminal_status") == "failed"
         store.update(
             run_id,
@@ -52,8 +52,13 @@ def _execute_run(run_id: str, prompt: str) -> None:
         store.update(run_id, status="failed", error=str(error))
 
 
-async def _execute_background(run_id: str, prompt: str) -> None:
-    await asyncio.to_thread(_execute_run, run_id, prompt)
+async def _execute_background(run_id: str, prompt: str, agent_prompts: dict[str, str] | None = None) -> None:
+    await asyncio.to_thread(_execute_run, run_id, prompt, agent_prompts)
+
+
+@app.get("/agents")
+def get_agents() -> list[dict[str, Any]]:
+    return list(harness.agents.values())
 
 
 @app.get("/health")
@@ -90,7 +95,7 @@ async def create_run(request: RunRequest) -> dict[str, Any]:
         )
     record = store.create(request.harness, request.prompt, settings.model_id)
     store.append_event(record.run_id, "runtime", "queued", "Run accepted by the robust runtime.")
-    task = asyncio.create_task(_execute_background(record.run_id, request.prompt))
+    task = asyncio.create_task(_execute_background(record.run_id, request.prompt, request.agent_prompts))
     background_tasks.add(task)
     task.add_done_callback(background_tasks.discard)
     return {

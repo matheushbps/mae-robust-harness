@@ -225,7 +225,23 @@ textarea:focus { border-color: var(--line-dark); border-left-color: var(--accent
   .fork-link, .join-link, .final-row::before, .final-row .agent-node::before { display: none; }
   .parallel-row, .final-row { gap: 8px; }
   .parallel-row .agent-node + .agent-node, .final-row .agent-node + .agent-node { margin-top: 0; }
-  .agent-node { min-height: 52px; }
-  .agent-graph { gap: 7px; }
   .page-footer { align-items: flex-start; flex-direction: column; justify-content: center; gap: 6px; }
 }
+
+.agent-config-card { margin-top: 18px; padding: 20px; border: 1px solid var(--line); background: var(--surface); }
+.agent-config-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; background: transparent; border: 0; cursor: pointer; padding: 0; text-align: left; }
+.agent-config-toggle h3 { margin: 0; font-size: 13.5px; font-weight: 620; color: #253029; }
+.agent-config-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+.agent-prompt-box { padding: 12px; border: 1px solid var(--line); background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
+.agent-prompt-box.customized { border-color: #8bb3e8; background: #f4f8fe; }
+.agent-prompt-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.agent-prompt-header strong { font-size: 10.5px; font-weight: 650; }
+.agent-prompt-header small { color: var(--muted); font-size: 7.5px; }
+.agent-prompt-textarea { width: 100%; min-height: 75px; padding: 8px 10px; margin: 0; border: 1px solid var(--line); border-left: 2px solid var(--accent); background: #fff; font-size: 10.5px; line-height: 1.45; color: #253029; resize: vertical; }
+.agent-prompt-textarea:focus { border-color: var(--line-dark); box-shadow: 0 0 0 2px rgba(173,201,54,.15); }
+.agent-prompt-footer { display: flex; align-items: center; justify-content: space-between; }
+.agent-prompt-footer button { padding: 3px 8px; font-size: 8px; border: 1px solid #d1dc9e; background: #eef3d4; color: #485714; cursor: pointer; border-radius: 2px; }
+.agent-prompt-footer button:hover { background: #e2ecc0; }
+.agent-prompt-footer .reset-btn { border-color: #e2b3b3; background: #fff5f5; color: #992222; }
+.agent-prompt-footer .reset-btn:hover { background: #fee8e8; }
+

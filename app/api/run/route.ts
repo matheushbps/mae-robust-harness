@@ -12,12 +12,17 @@ export async function POST(request: Request) {
     return Response.json({ error: "Unsupported inference provider." }, { status: 400 });
   }
 
-  const runtimeUrl = (process.env.AGENT_RUNTIME_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
+  const agent_prompts =
+    typeof body?.agent_prompts === "object" && body?.agent_prompts !== null
+      ? (body.agent_prompts as Record<string, string>)
+      : undefined;
+
+  const runtimeUrl = (process.env.AGENT_RUNTIME_URL ?? "http://127.0.0.1:8788").replace(/\/$/, "");
   try {
     const upstream = await fetch(`${runtimeUrl}/runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Harness-Variant": "robust" },
-      body: JSON.stringify({ harness: "robust", prompt, provider }),
+      body: JSON.stringify({ harness: "robust", prompt, provider, agent_prompts }),
       signal: AbortSignal.timeout(120_000),
     });
     const payload = await upstream.json().catch(() => ({ error: "The runtime returned a non-JSON response." }));

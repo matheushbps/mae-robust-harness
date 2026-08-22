@@ -14,6 +14,7 @@ class RunRequest(BaseModel):
     harness: Literal["simple", "robust"]
     prompt: str = Field(min_length=20, max_length=20_000)
     provider: Literal["local-qwen"] = "local-qwen"
+    agent_prompts: dict[str, str] | None = None
 
     @field_validator("prompt")
     @classmethod

@@ -69,10 +69,20 @@ class RobustHarness:
         config = json.loads((RUNTIME_ROOT / "config/agents.json").read_text(encoding="utf-8"))
         self.agents = {agent["id"]: agent for agent in config["agents"]}
 
-    def run(self, run_id: str, prompt: str, emit: Emit) -> dict[str, Any]:
+    def run(
+        self,
+        run_id: str,
+        prompt: str,
+        emit: Emit,
+        agent_prompts: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         if not self.settings.dataset_path.exists():
             raise FileNotFoundError(f"Dataset not found: {self.settings.dataset_path}")
-        runner = _GraphRun(self.model, self.settings, self.agents, run_id, emit)
+        active_agents = {
+            k: {**v, "system": agent_prompts[k]} if (agent_prompts and k in agent_prompts) else dict(v)
+            for k, v in self.agents.items()
+        }
+        runner = _GraphRun(self.model, self.settings, active_agents, run_id, emit)
         return runner.invoke(prompt)
 
 

@@ -174,3 +174,17 @@ def test_robust_langgraph_completes_with_checkpoints(dataset_path: Path, tmp_pat
     assert "id=\"charts\"" in html_text
     assert "id=\"evidence-ledger\"" in html_text
     assert "Approved Evidence & Provenance Ledger" in html_text
+
+
+def test_robust_supports_custom_agent_prompts(dataset_path: Path, tmp_path: Path) -> None:
+    events: list[tuple[str, str]] = []
+    settings = settings_for(tmp_path, dataset_path)
+    harness = RobustHarness(StubModel(), settings)
+    result = harness.run(
+        "custom-agent-test",
+        "Analyze agricultural changes in the controlled fixture dataset.",
+        lambda node, event_type, _message, _data=None: events.append((node, event_type)),
+        agent_prompts={"final_editor": "Custom modified final editor system prompt."},
+    )
+    assert result["harness"] == "robust"
+    assert result["terminal_status"] == "completed"
