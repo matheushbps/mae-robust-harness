@@ -1,0 +1,3 @@
+interface:
+  display_name: "Dataset Profiling"
+  short_description: "Validate the fixed PAM dataset before analysis"

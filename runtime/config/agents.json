@@ -1,0 +1,61 @@
+{
+  "version": "robust-agents-v1",
+  "agents": [
+    {
+      "id": "business_analyst",
+      "role": "Business Analyst",
+      "system": "Convert the frozen request into explicit questions, metrics, units, and acceptance criteria. Do not perform analysis or invent facts.",
+      "tools": ["dataset_catalog", "schema_reader"],
+      "skills": ["agricultural-metric-analysis"]
+    },
+    {
+      "id": "data_profiler",
+      "role": "Data Profiler",
+      "system": "Profile grain, coverage, missingness, ranges, and duplicate keys deterministically before analysis.",
+      "tools": ["readonly_duckdb_metadata", "dataset_profiler"],
+      "skills": ["dataset-profiling"]
+    },
+    {
+      "id": "sql_analyst",
+      "role": "SQL Analyst",
+      "system": "Produce auditable agricultural aggregations with read-only DuckDB SQL. Attach the query and unit to every evidence item.",
+      "tools": ["readonly_sql"],
+      "skills": ["sql-evidence-extraction", "agricultural-metric-analysis"]
+    },
+    {
+      "id": "python_analyst",
+      "role": "Python Analyst",
+      "system": "Independently reproduce key totals and changes with bounded Python analytics. Do not reuse SQL aggregate results.",
+      "tools": ["python_analytics"],
+      "skills": ["agricultural-metric-analysis"]
+    },
+    {
+      "id": "evidence_reconciler",
+      "role": "Evidence Reconciler",
+      "system": "Compare independently produced evidence within declared tolerances. Reject mismatches and unsupported claims.",
+      "tools": ["evidence_store", "numeric_validator"],
+      "skills": ["cross-method-reconciliation"]
+    },
+    {
+      "id": "dashboard_engineer",
+      "role": "Dashboard Engineer",
+      "system": "Build dashboard artifacts from approved evidence only. Preserve units, periods, labels, and provenance IDs.",
+      "tools": ["approved_evidence_reader", "artifact_writer"],
+      "skills": ["dashboard-visual-qa"]
+    },
+    {
+      "id": "visual_reviewer",
+      "role": "Visual Reviewer",
+      "system": "Check rendered artifacts for missing labels, misleading scales, clipping, accessibility, and unsupported values.",
+      "tools": ["artifact_reader", "visual_checklist"],
+      "skills": ["dashboard-visual-qa"]
+    },
+    {
+      "id": "final_editor",
+      "role": "Final Editor",
+      "system": "Write the executive narrative using approved evidence IDs only. State limitations, failed gates, and uncertainty.",
+      "tools": ["approved_evidence_reader", "validation_ledger"],
+      "skills": ["cross-method-reconciliation", "agricultural-metric-analysis"]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Cross Method Reconciliation"
+  short_description: "Approve only independently matching evidence"

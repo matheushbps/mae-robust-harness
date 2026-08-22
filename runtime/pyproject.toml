@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.28"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mae-robust-runtime"
+version = "0.1.0"
+description = "Validated LangGraph runtime for the MAE agricultural agent benchmark."
+requires-python = ">=3.12"
+dependencies = [
+  "duckdb==1.5.5",
+  "fastapi==0.141.1",
+  "httpx==0.28.1",
+  "langgraph==1.2.11",
+  "langgraph-checkpoint-sqlite==3.1.1",
+  "pydantic==2.13.4",
+  "uvicorn==0.52.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.16.4",
+]
+
+[project.scripts]
+mae-runtime = "mae_runtime.app:main"
+mae-dataset = "mae_runtime.dataset:main"
+mae-graph = "mae_runtime.graph:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mae_runtime"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

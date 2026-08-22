@@ -1,0 +1,3 @@
+interface:
+  display_name: "Agricultural Metric Analysis"
+  short_description: "Apply PAM metric and aggregation rules"

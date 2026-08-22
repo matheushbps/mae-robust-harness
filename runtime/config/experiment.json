@@ -1,0 +1,27 @@
+{
+  "contract_version": "mae-experiment-v1",
+  "condition": "robust",
+  "model": {
+    "id": "qwen/qwen3.6-35b-a3b",
+    "quantization": "Q4_K_M",
+    "loaded_context_tokens": 65280,
+    "temperature": 0.0,
+    "max_completion_tokens": 4096,
+    "structured_reasoning": "off",
+    "narrative_reasoning": "on"
+  },
+  "dataset": {
+    "source": "IBGE SIDRA PAM",
+    "table": 5457,
+    "territorial_level": "municipality",
+    "years": [2019, 2020, 2021, 2022, 2023, 2024],
+    "crop_codes": ["40099", "40102", "40106", "40112", "40122", "40124", "40127"],
+    "variable_codes": ["8331", "216", "214", "112", "215"]
+  },
+  "limits": {
+    "max_repair_attempts": 2,
+    "numeric_tolerance": 0.000001,
+    "max_sql_rows": 500,
+    "network_during_run": false
+  }
+}
