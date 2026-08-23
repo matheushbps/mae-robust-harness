@@ -517,7 +517,7 @@ class _GraphRun:
             f"REQUEST:\n{state['prompt']}\nSTATUS:\n{state.get('terminal_status', 'completed')}\n"
             f"FAILURE:\n{state.get('failure_reason', '')}\nAPPROVED EVIDENCE:\n"
             f"{json.dumps(evidence)}",
-            max_tokens=self.settings.max_completion_tokens,
+            max_tokens=min(self.settings.max_completion_tokens, 1024),
         )
         terminal_status = state.get("terminal_status", "completed")
         evidence_items = [EvidenceItem.model_validate(item) for item in evidence]

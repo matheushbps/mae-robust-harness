@@ -215,7 +215,15 @@ function AgentNode({
 
 export default function Home() {
   const [prompt, setPrompt] = useState(defaultPrompt);
-  const [agentPrompts, setAgentPrompts] = useState<Record<string, string>>({});
+  const [isPromptLocked, setIsPromptLocked] = useState(false);
+  const [agentPrompts, setAgentPrompts] = useState<Record<string, string>>(() => {
+    const initialMap: Record<string, string> = {};
+    defaultAgents.forEach((agent) => {
+      initialMap[agent.id] = agent.system;
+    });
+    return initialMap;
+  });
+  const [confirmedAgents, setConfirmedAgents] = useState<Record<string, boolean>>({});
   const [runState, setRunState] = useState<RunState>("idle");
   const [runMessage, setRunMessage] = useState("Awaiting a connected model and graph runtime.");
   const [connection, setConnection] = useState<ConnectionState>("checking");
@@ -223,7 +231,7 @@ export default function Home() {
   const [runId, setRunId] = useState<string | null>(null);
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
 
-  // Fetch initial default agent prompts from runtime
+  // Fetch initial default agent prompts from runtime if available
   useEffect(() => {
     async function fetchAgents() {
       try {
@@ -234,10 +242,15 @@ export default function Home() {
           data.forEach((agent) => {
             initialMap[agent.id] = agent.system;
           });
-          setAgentPrompts((prev) => (Object.keys(prev).length === 0 ? initialMap : prev));
+          setAgentPrompts((prev) => {
+            const hasCustom = Object.keys(prev).some(
+              (k) => prev[k] !== defaultAgents.find((a) => a.id === k)?.system
+            );
+            return hasCustom ? prev : initialMap;
+          });
         }
       } catch {
-        // Fallback to local defaultAgents if offline
+        // Fallback to initial local map
       }
     }
     void fetchAgents();
@@ -295,6 +308,25 @@ export default function Home() {
       ...prev,
       [agentId]: newPrompt,
     }));
+    setConfirmedAgents((prev) => ({
+      ...prev,
+      [agentId]: false,
+    }));
+  };
+
+  const handleConfirmAgentPrompt = (agentId: string) => {
+    setConfirmedAgents((prev) => ({
+      ...prev,
+      [agentId]: true,
+    }));
+  };
+
+  const handleConfirmAllAgentPrompts = () => {
+    const confirmedMap: Record<string, boolean> = {};
+    defaultAgents.forEach((a) => {
+      confirmedMap[a.id] = true;
+    });
+    setConfirmedAgents(confirmedMap);
   };
 
   const handleResetAgentPrompt = (agentId: string) => {
@@ -303,6 +335,10 @@ export default function Home() {
       setAgentPrompts((prev) => ({
         ...prev,
         [agentId]: defaultAgent.system,
+      }));
+      setConfirmedAgents((prev) => ({
+        ...prev,
+        [agentId]: false,
       }));
     }
   };
@@ -313,6 +349,7 @@ export default function Home() {
       initialMap[a.id] = a.system;
     });
     setAgentPrompts(initialMap);
+    setConfirmedAgents({});
   };
 
   const getAgentSystemPrompt = (agentId: string) => {
@@ -493,21 +530,43 @@ export default function Home() {
                   <h3>Business prompt</h3>
                 </div>
               </div>
-              <span className={`tag ${isCustomPrompt ? "tag-custom" : ""}`}>
-                {isCustomPrompt ? "CUSTOM PROMPT" : "DEFAULT BENCHMARK"}
-              </span>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <span className={`tag ${isCustomPrompt ? "tag-custom" : ""}`}>
+                  {isCustomPrompt ? "CUSTOM PROMPT" : "DEFAULT BENCHMARK"}
+                </span>
+                {isPromptLocked && (
+                  <span className="tag" style={{ background: "#e8f8f0", color: "#1e5e3a", borderColor: "#a8dfbf" }}>
+                    ✓ LOCKED
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="preset-selector">
-              <small>PRESET SCENARIOS:</small>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <small>PRESET SCENARIOS:</small>
+                <button
+                  type="button"
+                  className={`preset-chip confirm-chip ${isPromptLocked ? "active" : ""}`}
+                  onClick={() => setIsPromptLocked(!isPromptLocked)}
+                  title="Lock and confirm prompt for this run"
+                  style={{ padding: "3px 8px", fontSize: "8px" }}
+                >
+                  {isPromptLocked ? "✓ Prompt Confirmed" : "Confirm Prompt"}
+                </button>
+              </div>
               <div className="preset-chips">
                 {promptPresets.map((preset) => (
                   <button
                     key={preset.id}
                     type="button"
                     className={`preset-chip ${prompt === preset.prompt ? "active" : ""}`}
-                    onClick={() => setPrompt(preset.prompt)}
+                    onClick={() => {
+                      setPrompt(preset.prompt);
+                      setIsPromptLocked(false);
+                    }}
                     title={preset.description}
+                    disabled={isPromptLocked}
                   >
                     {preset.label}
                   </button>
@@ -516,7 +575,10 @@ export default function Home() {
                   <button
                     type="button"
                     className="preset-chip reset-chip"
-                    onClick={() => setPrompt(defaultPrompt)}
+                    onClick={() => {
+                      setPrompt(defaultPrompt);
+                      setIsPromptLocked(false);
+                    }}
                     title="Reset to default benchmark prompt"
                   >
                     Reset
@@ -529,11 +591,23 @@ export default function Home() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Enter agricultural analysis prompt..."
-              disabled={["submitting", "accepted", "running"].includes(runState)}
+              disabled={isPromptLocked || ["submitting", "accepted", "running"].includes(runState)}
             />
             <div className="prompt-footer">
               <small>{prompt.length} characters</small>
             </div>
+
+            {/* Visual confirmation banner when custom prompts are active */}
+            {customAgentsCount > 0 && (
+              <div className="custom-prompts-banner">
+                <span>
+                  <b>✓</b> {customAgentsCount} Custom Agent System Prompt{customAgentsCount > 1 ? "s" : ""}{" "}
+                  Active & Confirmed
+                </span>
+                <small>Will be injected into runtime memory</small>
+              </div>
+            )}
+
             <div className="prompt-meta">
               <div>
                 <small>SOURCE TABLE</small>
@@ -723,27 +797,39 @@ export default function Home() {
                   : "ALL DEFAULT PROMPTS"}
               </span>
               {customAgentsCount > 0 && (
-                <button
-                  type="button"
-                  className="preset-chip reset-chip"
-                  onClick={handleResetAllAgentPrompts}
-                  title="Reset all system messages to defaults"
-                  style={{ padding: "3px 8px", fontSize: "8px" }}
-                >
-                  Reset All
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="preset-chip confirm-chip active"
+                    onClick={handleConfirmAllAgentPrompts}
+                    title="Confirm and lock all custom agent prompts"
+                    style={{ padding: "3px 8px", fontSize: "8px" }}
+                  >
+                    ✓ Confirm All
+                  </button>
+                  <button
+                    type="button"
+                    className="preset-chip reset-chip"
+                    onClick={handleResetAllAgentPrompts}
+                    title="Reset all system messages to defaults"
+                    style={{ padding: "3px 8px", fontSize: "8px" }}
+                  >
+                    Reset All
+                  </button>
+                </>
               )}
             </div>
           </div>
           <p style={{ fontSize: "11.5px", color: "var(--muted)", marginTop: "6px", marginBottom: "12px" }}>
-            Customize the system message for each specialist agent. Custom prompts apply to subsequent runs
-            in-memory and are embedded into the resulting HTML dashboard.
+            Customize the system message for each specialist agent. Typing and clicking <strong>Confirm & Apply</strong> locks
+            your custom prompts in-memory for the next run, injecting them directly into the LLM context.
           </p>
 
           <div className="agent-config-grid">
             {defaultAgents.map((agent) => {
               const currentSystem = getAgentSystemPrompt(agent.id);
               const isModified = currentSystem !== agent.system;
+              const isConfirmed = confirmedAgents[agent.id] || false;
               return (
                 <div key={agent.id} className={`agent-prompt-box ${isModified ? "customized" : ""}`}>
                   <div className="agent-prompt-header">
@@ -753,9 +839,19 @@ export default function Home() {
                       </strong>
                       <small style={{ display: "block" }}>id: {agent.id}</small>
                     </div>
-                    <span className={`tag ${isModified ? "tag-custom" : ""}`} style={{ fontSize: "6.5px" }}>
-                      {isModified ? "CUSTOMIZED" : "DEFAULT"}
-                    </span>
+                    <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                      {isModified && isConfirmed && (
+                        <span
+                          className="tag"
+                          style={{ fontSize: "6.5px", background: "#e8f8f0", color: "#1e5e3a", borderColor: "#a8dfbf" }}
+                        >
+                          ✓ CONFIRMED
+                        </span>
+                      )}
+                      <span className={`tag ${isModified ? "tag-custom" : ""}`} style={{ fontSize: "6.5px" }}>
+                        {isModified ? "CUSTOMIZED" : "DEFAULT"}
+                      </span>
+                    </div>
                   </div>
                   <textarea
                     className="agent-prompt-textarea"
@@ -768,15 +864,28 @@ export default function Home() {
                     <small style={{ fontSize: "8px", color: "var(--muted)" }}>
                       {currentSystem.length} chars · Tools: {agent.tools.join(", ")}
                     </small>
-                    {isModified && (
-                      <button
-                        type="button"
-                        className="reset-btn"
-                        onClick={() => handleResetAgentPrompt(agent.id)}
-                      >
-                        Reset
-                      </button>
-                    )}
+                    <div style={{ display: "flex", gap: "5px" }}>
+                      {isModified && (
+                        <button
+                          type="button"
+                          className={`confirm-btn ${isConfirmed ? "active" : ""}`}
+                          onClick={() => handleConfirmAgentPrompt(agent.id)}
+                          title="Confirm and apply prompt for next run"
+                        >
+                          {isConfirmed ? "✓ Applied" : "Confirm & Apply"}
+                        </button>
+                      )}
+                      {isModified && (
+                        <button
+                          type="button"
+                          className="reset-btn"
+                          onClick={() => handleResetAgentPrompt(agent.id)}
+                          title="Reset to default system prompt"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
