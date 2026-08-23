@@ -312,81 +312,195 @@ def render_dashboard_html(
     run_id = str(payload.get("run_id", "local-run"))
     created_at = str(payload.get("created_at", utc_now()))
     colors = _dashboard_colors(briefing)
+    temporal_rows: list[dict[str, Any]] = payload.get("temporal_rows") or []
 
-    # Aggregate metric summaries
-    metric_totals: dict[str, dict[str, float]] = defaultdict(lambda: {"start": 0.0, "end": 0.0})
-    for item in evidence_list:
-        m = item.get("metric", "")
-        if (
-            item.get("start_value") is not None
-            and item.get("end_value") is not None
-            and m in ("planted_area_ha", "production_tonnes", "production_value_thousand_brl")
-        ):
-            metric_totals[m]["start"] += float(item["start_value"])
-            metric_totals[m]["end"] += float(item["end_value"])
-
-    area_start = metric_totals["planted_area_ha"]["start"]
-    area_end = metric_totals["planted_area_ha"]["end"]
-    prod_start = metric_totals["production_tonnes"]["start"]
-    prod_end = metric_totals["production_tonnes"]["end"]
-    val_start = metric_totals["production_value_thousand_brl"]["start"]
-    val_end = metric_totals["production_value_thousand_brl"]["end"]
-
-    # Compute overall yield
-    yield_start = (prod_start * 1000.0 / area_start) if area_start > 0 else 0.0
-    yield_end = (prod_end * 1000.0 / area_end) if area_end > 0 else 0.0
-
-    kpi_specs = [
-        ("Total Planted Area", area_start, area_end, "ha"),
-        ("Total Production", prod_start, prod_end, "tonnes"),
-        ("Average Yield", yield_start, yield_end, "kg/ha"),
-        ("Gross Crop Value", val_start, val_end, "thousand BRL"),
-    ]
-
-    kpi_cards = []
-    for label, start, end, unit in kpi_specs:
-        change = ((end - start) / start * 100.0) if start > 0 else 0.0
-        sign = "+" if change >= 0 else ""
-        css_class = "positive" if change >= 0 else "negative"
-        fmt_end = _format_number(end, unit)
-        fmt_start = _format_number(start, unit)
-        kpi_cards.append(
-            f"""<div class="kpi-card">
-              <span class="kpi-label">{html.escape(label)}</span>
-              <div class="kpi-value">{fmt_end} <span class="kpi-unit">{html.escape(unit)}</span></div>
-              <div class="kpi-trend {css_class}">{sign}{change:.1f}% vs 2019 ({fmt_start})</div>
-            </div>"""
+    def render_kpi_card(label: str, value_text: str, unit_text: str, note_text: str, note_class: str = "positive") -> str:
+        unit_html = f' <span class="kpi-unit">{html.escape(unit_text)}</span>' if unit_text else ""
+        note_html = (
+            f'<div class="kpi-trend {note_class}">{html.escape(note_text)}</div>' if note_text else ""
+        )
+        return (
+            "<div class=\"kpi-card\">"
+            f"<span class=\"kpi-label\">{html.escape(label)}</span>"
+            f"<div class=\"kpi-value\">{html.escape(value_text)}{unit_html}</div>"
+            f"{note_html}"
+            "</div>"
         )
 
-    # Chart data: group changes by crop
-    crops = sorted({item.get("crop_name", "") for item in evidence_list if item.get("crop_name")})
-    chart_bars = []
-    for crop in crops:
-        crop_items = [it for it in evidence_list if it.get("crop_name") == crop]
-        for it in crop_items:
-            m = it.get("metric", "")
-            chg = it.get("change_percent")
-            if chg is not None:
-                val = float(chg)
-                width = min(abs(val), 100.0)
-                bar_class = "bar-positive" if val >= 0 else "bar-negative"
-                sign = "+" if val >= 0 else ""
-                unit_esc = html.escape(it.get("unit", ""))
-                crop_esc = html.escape(crop)
-                metric_esc = html.escape(m)
-                m_label = _metric_label(m)
+    kpi_cards: list[str] = []
+    chart_bars: list[str] = []
+    if temporal_rows and not evidence_list:
+        by_crop: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        total_production = 0.0
+        weighted_yields: list[float] = []
+        for row in temporal_rows:
+            crop_code = str(row.get("crop_code", ""))
+            by_crop[crop_code].append(row)
+            production_value = row.get("production_tonnes")
+            if production_value is not None:
+                total_production += float(production_value)
+            yield_value = row.get("weighted_yield_kg_ha")
+            if yield_value is not None:
+                weighted_yields.append(float(yield_value))
+
+        improved_crops = 0
+        for crop_rows in by_crop.values():
+            ordered = sorted(crop_rows, key=lambda item: int(item.get("year") or 0))
+            if len(ordered) < 2:
+                continue
+            start_rank = ordered[0].get("production_rank")
+            end_rank = ordered[-1].get("production_rank")
+            try:
+                if start_rank is not None and end_rank is not None and int(end_rank) < int(start_rank):
+                    improved_crops += 1
+            except (TypeError, ValueError):
+                continue
+
+        average_yield = sum(weighted_yields) / len(weighted_yields) if weighted_yields else None
+        kpi_cards = [
+            render_kpi_card(
+                "Reconciled Crop-Year Rows",
+                f"{len(temporal_rows):,}",
+                "",
+                f"{len(by_crop)} crops represented · 2019–2024",
+                "neutral",
+            ),
+            render_kpi_card(
+                "Total Production",
+                _format_number(total_production, "tonnes"),
+                "tonnes",
+                "Summed across the crop-year rows visible below.",
+            ),
+            render_kpi_card(
+                "Average Weighted Yield",
+                _format_number(average_yield, "kg/ha"),
+                "kg/ha",
+                "Mean annual weighted yield across the crop-year rows.",
+            ),
+            render_kpi_card(
+                "Improved Crops",
+                f"{improved_crops:,}",
+                "crops",
+                "Cropping ranks improved from 2019 to 2024.",
+            ),
+        ]
+
+        for crop_code, crop_rows in sorted(by_crop.items()):
+            crop_name = str(crop_rows[0].get("crop_name", crop_code)) if crop_rows else crop_code
+            ordered = sorted(crop_rows, key=lambda item: int(item.get("year") or 0))
+            if len(ordered) < 2:
+                continue
+            first = ordered[0]
+            last = ordered[-1]
+            for metric, label, unit in (
+                ("production_tonnes", "Production", "tonnes"),
+                ("weighted_yield_kg_ha", "Yield", "kg/ha"),
+            ):
+                start_value = first.get(metric)
+                end_value = last.get(metric)
+                if start_value in (None, 0) or end_value is None:
+                    continue
+                change = (float(end_value) / float(start_value) - 1.0) * 100.0
+                width = min(abs(change), 100.0)
+                bar_class = "bar-positive" if change >= 0 else "bar-negative"
+                sign = "+" if change >= 0 else ""
                 chart_bars.append(
-                    f"""<div class="chart-row" data-crop="{crop_esc}" data-metric="{metric_esc}">
+                    f"""<div class="chart-row" data-crop="{html.escape(crop_name)}" data-metric="{html.escape(metric)}">
                       <div class="crop-meta">
-                        <strong>{crop_esc}</strong>
-                        <small>{m_label} ({unit_esc})</small>
+                        <strong>{html.escape(crop_name)}</strong>
+                        <small>{label} change vs 2019 ({html.escape(unit)})</small>
                       </div>
                       <div class="bar-container">
                         <div class="bar-fill {bar_class}" style="width: {width:.1f}%;"></div>
                       </div>
-                      <span class="bar-value {bar_class}">{sign}{val:.1f}%</span>
+                      <span class="bar-value {bar_class}">{sign}{change:.1f}%</span>
                     </div>"""
                 )
+    elif evidence_list:
+        # Aggregate metric summaries for released evidence.
+        metric_totals: dict[str, dict[str, float]] = defaultdict(lambda: {"start": 0.0, "end": 0.0})
+        for item in evidence_list:
+            m = item.get("metric", "")
+            if (
+                item.get("start_value") is not None
+                and item.get("end_value") is not None
+                and m in ("planted_area_ha", "production_tonnes", "production_value_thousand_brl")
+            ):
+                metric_totals[m]["start"] += float(item["start_value"])
+                metric_totals[m]["end"] += float(item["end_value"])
+
+        area_start = metric_totals["planted_area_ha"]["start"]
+        area_end = metric_totals["planted_area_ha"]["end"]
+        prod_start = metric_totals["production_tonnes"]["start"]
+        prod_end = metric_totals["production_tonnes"]["end"]
+        val_start = metric_totals["production_value_thousand_brl"]["start"]
+        val_end = metric_totals["production_value_thousand_brl"]["end"]
+
+        yield_start = (prod_start * 1000.0 / area_start) if area_start > 0 else 0.0
+        yield_end = (prod_end * 1000.0 / area_end) if area_end > 0 else 0.0
+
+        kpi_specs = [
+            ("Total Planted Area", area_start, area_end, "ha"),
+            ("Total Production", prod_start, prod_end, "tonnes"),
+            ("Average Yield", yield_start, yield_end, "kg/ha"),
+            ("Gross Crop Value", val_start, val_end, "thousand BRL"),
+        ]
+
+        for label, start, end, unit in kpi_specs:
+            change = ((end - start) / start * 100.0) if start > 0 else 0.0
+            sign = "+" if change >= 0 else ""
+            css_class = "positive" if change >= 0 else "negative"
+            fmt_end = _format_number(end, unit)
+            fmt_start = _format_number(start, unit)
+            kpi_cards.append(
+                f"""<div class="kpi-card">
+                  <span class="kpi-label">{html.escape(label)}</span>
+                  <div class="kpi-value">{fmt_end} <span class="kpi-unit">{html.escape(unit)}</span></div>
+                  <div class="kpi-trend {css_class}">{sign}{change:.1f}% vs 2019 ({fmt_start})</div>
+                </div>"""
+            )
+
+        crops = sorted({item.get("crop_name", "") for item in evidence_list if item.get("crop_name")})
+        for crop in crops:
+            crop_items = [it for it in evidence_list if it.get("crop_name") == crop]
+            for it in crop_items:
+                m = it.get("metric", "")
+                chg = it.get("change_percent")
+                if chg is not None:
+                    val = float(chg)
+                    width = min(abs(val), 100.0)
+                    bar_class = "bar-positive" if val >= 0 else "bar-negative"
+                    sign = "+" if val >= 0 else ""
+                    unit_esc = html.escape(it.get("unit", ""))
+                    crop_esc = html.escape(crop)
+                    metric_esc = html.escape(m)
+                    m_label = _metric_label(m)
+                    chart_bars.append(
+                        f"""<div class="chart-row" data-crop="{crop_esc}" data-metric="{metric_esc}">
+                          <div class="crop-meta">
+                            <strong>{crop_esc}</strong>
+                            <small>{m_label} ({unit_esc})</small>
+                          </div>
+                          <div class="bar-container">
+                            <div class="bar-fill {bar_class}" style="width: {width:.1f}%;"></div>
+                          </div>
+                          <span class="bar-value {bar_class}">{sign}{val:.1f}%</span>
+                        </div>"""
+                    )
+    else:
+        kpi_cards = [
+            render_kpi_card("Release Status", "Not released", "", "No released data available.", "neutral"),
+            render_kpi_card("Released Claims", "0", "claims", "No reconciled evidence was available.", "neutral"),
+            render_kpi_card("Chart Status", "Unavailable", "", "No released data available for charting.", "neutral"),
+            render_kpi_card("Narrative Status", "Withheld", "", "The release failed closed before publication.", "neutral"),
+        ]
+
+    # Chart data: group changes by crop
+    chart_empty_notice = (
+        '<div class="stream-empty">No released data available for charting.</div>'
+        if not chart_bars
+        else ""
+    )
 
     # Evidence Table Rows
     evidence_rows = []
@@ -421,6 +535,9 @@ def render_dashboard_html(
               </td>
             </tr>"""
         )
+    evidence_empty_notice = (
+        '<div class="stream-empty">No released data available.</div>' if not evidence_list else ""
+    )
 
     # Validation Checks Rows
     val_rows = []
@@ -689,6 +806,9 @@ def render_dashboard_html(
       font-size: 0.85rem;
       font-weight: 600;
     }}
+    .kpi-trend.neutral {{
+      color: var(--text-muted);
+    }}
     .positive {{ color: var(--positive); }}
     .negative {{ color: var(--negative); }}
     
@@ -930,9 +1050,10 @@ def render_dashboard_html(
         <button class="filter-btn" onclick="filterCharts('production_value_thousand_brl')">Value</button>
       </div>
     </div>
-    <div class="chart-container" id="chart-container">
-      {"".join(chart_bars)}
-    </div>
+      <div class="chart-container" id="chart-container">
+        {"".join(chart_bars)}
+      </div>
+      {chart_empty_notice}
   </section>
 
   {narrative_section}
@@ -942,6 +1063,7 @@ def render_dashboard_html(
       <h2>Approved Evidence & Provenance Ledger</h2>
       <span class="badge badge-pass">{len(evidence_list)} Verified Claims</span>
     </div>
+    {evidence_empty_notice}
     <details class="evidence-details" open>
       <summary>Click to view/collapse the auditable evidence table</summary>
       <div class="table-wrapper">

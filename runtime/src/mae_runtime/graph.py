@@ -158,6 +158,13 @@ def render_certified_fallback(evidence: list[dict[str, Any]]) -> str:
 
 
 def render_temporal_fallback(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return (
+            "## Temporal analysis not released\n\n"
+            "The branch replay exhausted its repair budget before a reconciled 42-row table "
+            "could be published.\n\n"
+            "No analytical conclusions were released."
+        )
     by_crop: dict[str, dict[int, dict[str, Any]]] = {}
     for row in rows:
         by_crop.setdefault(str(row.get("crop_code")), {})[int(row.get("year", 0))] = row

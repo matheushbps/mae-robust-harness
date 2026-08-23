@@ -363,6 +363,88 @@ def test_robust_dashboard_renderer_applies_structured_visual_theme() -> None:
     assert "--accent: #2563eb;" in rendered
 
 
+def test_robust_dashboard_renderer_uses_temporal_rows_when_evidence_is_empty() -> None:
+    rendered = render_dashboard_html(
+        {
+            "title": "Temporal fixture",
+            "source": "Fixture",
+            "evidence": [],
+            "validation": [],
+            "temporal_rows": [
+                {
+                    "crop_code": "40124",
+                    "crop_name": "Upland cotton (seed)",
+                    "year": 2019,
+                    "production_tonnes": 10.0,
+                    "weighted_yield_kg_ha": 100.0,
+                    "yoy_production_pct": None,
+                    "production_rank": 2,
+                    "trailing_3y_yield_kg_ha": 100.0,
+                    "yield_vs_trailing_pct": 0.0,
+                },
+                {
+                    "crop_code": "40124",
+                    "crop_name": "Upland cotton (seed)",
+                    "year": 2024,
+                    "production_tonnes": 20.0,
+                    "weighted_yield_kg_ha": 140.0,
+                    "yoy_production_pct": 100.0,
+                    "production_rank": 1,
+                    "trailing_3y_yield_kg_ha": 120.0,
+                    "yield_vs_trailing_pct": 16.6666666667,
+                },
+                {
+                    "crop_code": "00001",
+                    "crop_name": "Paddy rice",
+                    "year": 2019,
+                    "production_tonnes": 30.0,
+                    "weighted_yield_kg_ha": 200.0,
+                    "yoy_production_pct": None,
+                    "production_rank": 1,
+                    "trailing_3y_yield_kg_ha": 200.0,
+                    "yield_vs_trailing_pct": 0.0,
+                },
+                {
+                    "crop_code": "00001",
+                    "crop_name": "Paddy rice",
+                    "year": 2024,
+                    "production_tonnes": 15.0,
+                    "weighted_yield_kg_ha": 180.0,
+                    "yoy_production_pct": -50.0,
+                    "production_rank": 2,
+                    "trailing_3y_yield_kg_ha": 190.0,
+                    "yield_vs_trailing_pct": -5.2631578947,
+                },
+            ],
+            "generated_analysis": {
+                "sql": {"status": "completed"},
+                "python": {"status": "completed"},
+            },
+            "temporal_label": "4 reconciled crop-year rows",
+        }
+    )
+
+    assert "Reconciled Crop-Year Rows" in rendered
+    assert "4" in rendered
+    assert "Total Production" in rendered
+    assert "Paddy rice" in rendered
+    assert "0 ha" not in rendered
+
+
+def test_robust_dashboard_renderer_shows_placeholder_when_no_data_is_released() -> None:
+    rendered = render_dashboard_html(
+        {
+            "title": "Empty fixture",
+            "source": "Fixture",
+            "evidence": [],
+            "validation": [],
+        }
+    )
+
+    assert "No released data available" in rendered
+    assert "0 ha" not in rendered
+
+
 def test_robust_repairs_only_rejected_sql_branch_and_preserves_python(tmp_path: Path) -> None:
     dataset = full_temporal_fixture(tmp_path)
     model = GeneratedRepairModel()
