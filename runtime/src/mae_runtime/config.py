@@ -43,13 +43,25 @@ class Settings(BaseModel):
     checkpoint_path: Path
     numeric_tolerance: float
     max_repair_attempts: int
+    runtime_token: str | None = None
+    require_runtime_auth: bool = False
+    max_concurrent_runs: int = 2
+    max_runs_per_window: int = 10
+    run_window_seconds: int = 60
+    max_stored_runs: int = 200
 
 
 def get_settings() -> Settings:
     _load_env_file(RUNTIME_ROOT / ".env")
     _load_env_file(REPOSITORY_ROOT / ".env.local")
+    runtime_host = os.getenv("RUNTIME_HOST", "127.0.0.1")
+    runtime_token = os.getenv("MAE_RUNTIME_TOKEN")
+    is_loopback = runtime_host in {"127.0.0.1", "localhost", "::1"}
+    require_runtime_auth = bool(runtime_token) or not is_loopback
+    if require_runtime_auth and not runtime_token:
+        raise RuntimeError("MAE_RUNTIME_TOKEN is required when RUNTIME_HOST is not loopback.")
     return Settings(
-        runtime_host=os.getenv("RUNTIME_HOST", "127.0.0.1"),
+        runtime_host=runtime_host,
         runtime_port=int(os.getenv("RUNTIME_PORT", "8788")),
         model_base_url=os.getenv("MODEL_BASE_URL", "http://127.0.0.1:1234/v1").rstrip("/"),
         model_id=os.getenv("MODEL_ID", "qwen/qwen3.6-35b-a3b"),
@@ -62,4 +74,10 @@ def get_settings() -> Settings:
         checkpoint_path=_path_from_env("CHECKPOINT_PATH", REPOSITORY_ROOT / "outputs/checkpoints.sqlite"),
         numeric_tolerance=float(os.getenv("NUMERIC_TOLERANCE", "0.000001")),
         max_repair_attempts=int(os.getenv("MAX_REPAIR_ATTEMPTS", "4")),
+        runtime_token=runtime_token,
+        require_runtime_auth=require_runtime_auth,
+        max_concurrent_runs=int(os.getenv("MAX_CONCURRENT_RUNS", "2")),
+        max_runs_per_window=int(os.getenv("MAX_RUNS_PER_WINDOW", "10")),
+        run_window_seconds=int(os.getenv("RUN_WINDOW_SECONDS", "60")),
+        max_stored_runs=int(os.getenv("MAX_STORED_RUNS", "200")),
     )

@@ -1,3 +1,5 @@
+import { runtimeHeaders } from "../runtime-headers";
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const runId = searchParams.get("run_id") ?? "";
@@ -12,6 +14,7 @@ export async function GET(request: Request) {
   try {
     const upstream = await fetch(`${runtimeUrl}/runs/${runId}/artifacts/${file}`, {
       cache: "no-store",
+      headers: runtimeHeaders(),
       signal: AbortSignal.timeout(10_000),
     });
     if (!upstream.ok) {

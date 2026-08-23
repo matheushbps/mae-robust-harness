@@ -1,3 +1,5 @@
+import { runtimeHeaders } from "../runtime-headers";
+
 export async function GET(request: Request) {
   const runId = new URL(request.url).searchParams.get("run_id") ?? "";
   if (!/^[a-f0-9]{16}$/.test(runId)) {
@@ -7,6 +9,7 @@ export async function GET(request: Request) {
   try {
     const upstream = await fetch(`${runtimeUrl}/runs/${runId}`, {
       cache: "no-store",
+      headers: runtimeHeaders(),
       signal: AbortSignal.timeout(10_000),
     });
     const payload = await upstream.json().catch(() => ({ error: "Runtime returned non-JSON status." }));

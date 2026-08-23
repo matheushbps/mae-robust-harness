@@ -4,21 +4,28 @@ import asyncio
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.responses import HTMLResponse
 
 from .config import get_settings
 from .contracts import RunRequest
-from .dataset import file_sha256
 from .graph import RobustHarness
 from .model_client import QwenClient
 from .run_store import RunStore
+from .security import RuntimeGuard, resolve_artifact
 
 settings = get_settings()
 store = RunStore(settings.artifacts_dir)
 model = QwenClient(settings)
 harness = RobustHarness(model, settings)
 background_tasks: set[asyncio.Task[Any]] = set()
+guard = RuntimeGuard(
+    token=settings.runtime_token,
+    require_auth=settings.require_runtime_auth,
+    max_concurrent=settings.max_concurrent_runs,
+    max_per_window=settings.max_runs_per_window,
+    window_seconds=settings.run_window_seconds,
+)
 
 app = FastAPI(
     title="MAE Robust Harness Runtime",
@@ -48,40 +55,42 @@ def _execute_run(run_id: str, prompt: str, agent_prompts: dict[str, str] | None 
             error=result.get("failure_reason") if terminal_failed else None,
         )
     except Exception as error:  # noqa: BLE001 - terminal failures are persisted for evaluation.
-        emit("runtime", "failed", "Run terminated with an exception.", {"error": str(error)})
-        store.update(run_id, status="failed", error=str(error))
+        emit("runtime", "failed", "Run terminated with an exception.", {"error_type": type(error).__name__})
+        store.update(run_id, status="failed", error="The run failed inside the runtime.")
 
 
 async def _execute_background(run_id: str, prompt: str, agent_prompts: dict[str, str] | None = None) -> None:
-    await asyncio.to_thread(_execute_run, run_id, prompt, agent_prompts)
+    try:
+        await asyncio.to_thread(_execute_run, run_id, prompt, agent_prompts)
+    finally:
+        guard.release()
 
 
-@app.get("/agents")
+def authorize(authorization: str | None = Header(default=None)) -> None:
+    guard.authenticate(authorization)
+
+
+@app.get("/agents", dependencies=[Depends(authorize)])
 def get_agents() -> list[dict[str, Any]]:
     return list(harness.agents.values())
 
 
-@app.get("/health")
+@app.get("/health", dependencies=[Depends(authorize)])
 def health() -> dict[str, Any]:
     try:
         model_status = model.health()
-    except Exception as error:  # noqa: BLE001 - health reports upstream failures without crashing.
-        model_status = {"connected": False, "model": settings.model_id, "error": str(error)}
+    except Exception:  # noqa: BLE001 - health must not expose upstream details.
+        model_status = {"connected": False, "model": settings.model_id, "available": False}
     return {
         "status": "ready" if settings.dataset_path.exists() and model_status.get("available") else "degraded",
         "harness": settings.harness_variant,
-        "model": model_status,
-        "dataset": {
-            "ready": settings.dataset_path.exists(),
-            "path": str(settings.dataset_path),
-            "sha256": file_sha256(settings.dataset_path) if settings.dataset_path.exists() else None,
-        },
-        "checkpoint": {"backend": "sqlite", "path": str(settings.checkpoint_path)},
-        "graph": {"max_repair_attempts": settings.max_repair_attempts},
+        "model": {"model": settings.model_id, "available": bool(model_status.get("available"))},
+        "dataset": {"ready": settings.dataset_path.exists()},
+        "limits": {"max_concurrent_runs": settings.max_concurrent_runs},
     }
 
 
-@app.post("/runs", status_code=status.HTTP_202_ACCEPTED)
+@app.post("/runs", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(authorize)])
 async def create_run(request: RunRequest) -> dict[str, Any]:
     if request.harness != settings.harness_variant:
         raise HTTPException(
@@ -93,7 +102,17 @@ async def create_run(request: RunRequest) -> dict[str, Any]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The DuckDB dataset has not been built yet.",
         )
-    record = store.create(request.harness, request.prompt, settings.model_id)
+    if store.count() >= settings.max_stored_runs:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Run retention limit reached.",
+        )
+    guard.reserve()
+    try:
+        record = store.create(request.harness, request.prompt, settings.model_id)
+    except Exception:
+        guard.release()
+        raise
     store.append_event(record.run_id, "runtime", "queued", "Run accepted by the robust runtime.")
     task = asyncio.create_task(_execute_background(record.run_id, request.prompt, request.agent_prompts))
     background_tasks.add(task)
@@ -105,7 +124,7 @@ async def create_run(request: RunRequest) -> dict[str, Any]:
     }
 
 
-@app.get("/runs/{run_id}")
+@app.get("/runs/{run_id}", dependencies=[Depends(authorize)])
 def get_run(run_id: str) -> dict[str, Any]:
     try:
         return store.get(run_id).model_dump(mode="json")
@@ -113,7 +132,7 @@ def get_run(run_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.") from error
 
 
-@app.get("/runs/{run_id}/events")
+@app.get("/runs/{run_id}/events", dependencies=[Depends(authorize)])
 def get_run_events(run_id: str, after: int = 0) -> dict[str, Any]:
     try:
         record = store.get(run_id)
@@ -123,9 +142,15 @@ def get_run_events(run_id: str, after: int = 0) -> dict[str, Any]:
     return {"run_id": run_id, "status": record.status, "events": events}
 
 
-@app.get("/runs/{run_id}/dashboard.html", response_class=HTMLResponse)
+@app.get("/runs/{run_id}/dashboard.html", response_class=HTMLResponse, dependencies=[Depends(authorize)])
 def get_run_dashboard_html(run_id: str) -> HTMLResponse:
-    artifact_path = settings.artifacts_dir / run_id / "dashboard.html"
+    try:
+        artifact_path = resolve_artifact(settings.artifacts_dir, run_id, "dashboard.html")
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid artifact path.",
+        ) from error
     if not artifact_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -134,11 +159,15 @@ def get_run_dashboard_html(run_id: str) -> HTMLResponse:
     return HTMLResponse(content=artifact_path.read_text(encoding="utf-8"))
 
 
-@app.get("/runs/{run_id}/artifacts/{filename}")
+@app.get("/runs/{run_id}/artifacts/{filename}", dependencies=[Depends(authorize)])
 def get_run_artifact(run_id: str, filename: str) -> Response:
-    if ".." in filename or filename.startswith("/") or "\\" in filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename.")
-    artifact_path = settings.artifacts_dir / run_id / filename
+    try:
+        artifact_path = resolve_artifact(settings.artifacts_dir, run_id, filename)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid artifact path.",
+        ) from error
     if not artifact_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -1,3 +1,5 @@
+import { runtimeHeaders } from "../runtime-headers";
+
 const allowedProviders = new Set(["local-qwen"]);
 
 export async function POST(request: Request) {
@@ -21,7 +23,7 @@ export async function POST(request: Request) {
   try {
     const upstream = await fetch(`${runtimeUrl}/runs`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Harness-Variant": "robust" },
+      headers: runtimeHeaders({ "Content-Type": "application/json", "X-Harness-Variant": "robust" }),
       body: JSON.stringify({ harness: "robust", prompt, provider, agent_prompts }),
       signal: AbortSignal.timeout(120_000),
     });
@@ -29,7 +31,7 @@ export async function POST(request: Request) {
     return Response.json(payload, { status: upstream.status });
   } catch {
     return Response.json(
-      { error: `The agent runtime is not reachable at ${runtimeUrl}. Start the local runtime and try again.` },
+      { error: "The agent runtime is not reachable. Start the local runtime and try again." },
       { status: 503 },
     );
   }

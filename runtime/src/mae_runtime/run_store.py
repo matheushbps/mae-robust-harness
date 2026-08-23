@@ -35,6 +35,10 @@ class RunStore:
                 raise KeyError(run_id)
             return self._runs[run_id].model_copy(deep=True)
 
+    def count(self) -> int:
+        with self._lock:
+            return len(self._runs)
+
     def update(self, run_id: str, **changes: Any) -> RunRecord:
         with self._lock:
             record = self._runs[run_id]

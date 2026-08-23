@@ -7,6 +7,9 @@ This repository is the graph-engineered variant of the MAE harness experiment. I
 ```bash
 # Set these in your shell or local secret manager; no environment files are committed.
 export AGENT_RUNTIME_URL=http://127.0.0.1:8788
+# If the runtime uses MAE_RUNTIME_TOKEN, provide the same secret only to this
+# server process; it is forwarded server-to-server and never sent to the browser.
+# export AGENT_RUNTIME_TOKEN='the-same-secret-as-the-runtime'
 export MODEL_BASE_URL=http://127.0.0.1:1234/v1
 export MODEL_ID=qwen/qwen3.6-35b-a3b
 npm install

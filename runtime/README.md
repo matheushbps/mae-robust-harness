@@ -11,11 +11,15 @@ export MODEL_BASE_URL=http://127.0.0.1:1234/v1
 export MODEL_ID=qwen/qwen3.6-35b-a3b
 export RUNTIME_HOST=127.0.0.1
 export RUNTIME_PORT=8788
+# When binding beyond loopback, use a high-entropy token and set the same value
+# as AGENT_RUNTIME_TOKEN in the web app process.
+# export MAE_RUNTIME_TOKEN='generate-a-secret-outside-the-repository'
 .venv/bin/python -m mae_runtime.dataset --fixture --output ../data/agriculture.duckdb
 .venv/bin/uvicorn mae_runtime.app:app --host 127.0.0.1 --port 8788
 ```
 
 Keep credentials and machine-specific settings in the shell or a local secret manager. No `.env` files are committed.
+Non-loopback listeners refuse to start without `MAE_RUNTIME_TOKEN`; the runtime also caps concurrent runs, request rate, retained runs, and generated prompt overrides.
 
 Use `--estimate` to inspect the approved dataset scope without downloading it. The full 42-chunk download requires the explicit `--full` flag.
 

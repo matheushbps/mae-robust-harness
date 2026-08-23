@@ -131,7 +131,7 @@ def execute_generated_sql(
     forbidden = re.compile(
         r"\b(insert|update|delete|drop|alter|create|attach|detach|copy|export|import|"
         r"install|load|pragma|call|read_csv|read_csv_auto|read_parquet|read_json|"
-        r"read_ndjson|read_blob|read_text|read_xlsx|read_xml|glob|httpfs|sqlite_scan|"
+        r"read_ndjson|read_blob|read_text|read_xlsx|read_xml|parquet_scan|glob|httpfs|sqlite_scan|"
         r"postgres_scan|mysql_scan|delta_scan|iceberg_scan|st_read|query_table)\b"
     )
     if (
@@ -155,6 +155,10 @@ def execute_generated_sql(
 
     connection = duckdb.connect(str(dataset_path), read_only=True)
     try:
+        connection.execute("SET enable_external_access=false")
+        connection.execute("SET memory_limit='256MB'")
+        connection.execute("SET max_temp_directory_size='64MB'")
+        connection.execute("SET threads=1")
         cursor = connection.execute(
             f"SELECT * FROM ({normalized}) AS bounded_generated_query LIMIT {max_rows + 1}"
         )
@@ -170,7 +174,7 @@ def execute_generated_sql(
                 BranchDiagnostic(
                     code="sql_execution_error",
                     message="DuckDB rejected the generated query.",
-                    details={"error": str(error)},
+                    details={"error_type": type(error).__name__},
                 )
             ],
         )
@@ -298,12 +302,22 @@ import resource
 import sys
 
 payload = json.loads(sys.stdin.read())
-if sys.platform != "darwin":
-    memory_bytes = int(payload["memory_mb"]) * 1024 * 1024
-    _, address_hard_limit = resource.getrlimit(resource.RLIMIT_AS)
-    resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, address_hard_limit))
+memory_bytes = int(payload["memory_mb"]) * 1024 * 1024
+memory_resource = getattr(resource, "RLIMIT_AS", None)
+if sys.platform == "darwin":
+    memory_resource = getattr(resource, "RLIMIT_DATA", memory_resource)
+if memory_resource is not None:
+    _, memory_hard_limit = resource.getrlimit(memory_resource)
+    target_memory = memory_bytes if memory_hard_limit <= 0 else min(memory_bytes, memory_hard_limit)
+    try:
+        resource.setrlimit(memory_resource, (target_memory, target_memory))
+    except ValueError:
+        pass
 cpu_seconds = max(1, int(math.ceil(float(payload["timeout_seconds"]))))
-resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
+try:
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
+except ValueError:
+    pass
 allowed_names = (
     "abs", "bool", "dict", "enumerate", "float", "int", "len", "list",
     "max", "min", "range", "round", "set", "sorted", "str", "sum", "tuple", "zip"
@@ -400,7 +414,6 @@ def execute_generated_python(
             ],
         )
     if completed.returncode != 0:
-        message = completed.stderr.strip()[-1000:] or "Restricted Python process failed."
         return _result(
             status="rejected",
             code=code,
@@ -410,7 +423,7 @@ def execute_generated_python(
                 BranchDiagnostic(
                     code="python_execution_error",
                     message="Restricted Python execution failed.",
-                    details={"error": message},
+                    details={"error_type": type(completed).__name__},
                 )
             ],
         )
@@ -440,7 +453,7 @@ def execute_generated_python(
                 BranchDiagnostic(
                     code="malformed_python_result",
                     message="Generated Python did not return JSON.",
-                    details={"error": str(error)},
+                    details={"error_type": type(error).__name__},
                 )
             ],
         )

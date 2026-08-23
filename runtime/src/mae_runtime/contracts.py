@@ -21,6 +21,24 @@ class RunRequest(BaseModel):
     def normalize_prompt(cls, value: str) -> str:
         return value.strip()
 
+    @field_validator("agent_prompts")
+    @classmethod
+    def validate_agent_prompts(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        if len(value) > 8:
+            raise ValueError("At most eight agent prompt overrides are allowed.")
+        normalized: dict[str, str] = {}
+        for role, prompt in value.items():
+            role = role.strip()
+            prompt = prompt.strip()
+            if not role or len(role) > 64:
+                raise ValueError("Agent roles must be non-empty and at most 64 characters.")
+            if not prompt or len(prompt) > 6_000:
+                raise ValueError("Agent prompt overrides must be non-empty and at most 6000 characters.")
+            normalized[role] = prompt
+        return normalized
+
 
 class RunEvent(BaseModel):
     sequence: int
