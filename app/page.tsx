@@ -133,7 +133,14 @@ const defaultAgents = [
   },
 ];
 
-const gates = ["Schema", "Python", "SQL", "Agreement", "Specs", "UI/UX"];
+const gates = [
+  "Request understood",
+  "Python result ready",
+  "SQL result ready",
+  "Numbers agree",
+  "Answers the task",
+  "Easy to read",
+];
 
 type RunState = "idle" | "submitting" | "accepted" | "running" | "completed" | "failed" | "error";
 type ConnectionState = "checking" | "connected" | "offline";
@@ -171,12 +178,28 @@ type RunSnapshot = {
 };
 
 const gateNodes: Record<string, string> = {
-  Schema: "business_agent",
-  Python: "python_reviewer",
-  SQL: "sql_reviewer",
-  Agreement: "reconciliation_agent",
-  Specs: "business_reviewer",
-  "UI/UX": "ui_ux_reviewer",
+  "Request understood": "business_agent",
+  "Python result ready": "python_reviewer",
+  "SQL result ready": "sql_reviewer",
+  "Numbers agree": "reconciliation_agent",
+  "Answers the task": "business_reviewer",
+  "Easy to read": "ui_ux_reviewer",
+};
+
+const plainRoleNames: Record<string, string> = {
+  business_agent: "Question planner",
+  sql_agent: "Independent calculation A",
+  sql_sandbox: "Database calculation",
+  sql_reviewer: "SQL result check",
+  python_agent: "Independent calculation B",
+  python_sandbox: "Python calculation",
+  python_reviewer: "Python result check",
+  reconciliation_agent: "Number comparison",
+  dashboard_agent: "Dashboard builder",
+  business_reviewer: "Answer check",
+  ui_ux_reviewer: "Readability check",
+  final_editor: "Certified publisher",
+  ui_console: "Visible result",
 };
 
 function BrandIcon() {
@@ -497,7 +520,7 @@ export default function Home() {
         <div className="rail-note">
           <span className="condition-token">CONDITION B</span>
           <strong>Validated orchestration</strong>
-          <p>Typed state, parallel sandboxes, dual reviewers, and real-time inter-agent audit trails.</p>
+          <p>Two independent calculations must agree before any number reaches the final result.</p>
         </div>
 
         <div className="rail-footer">
@@ -547,8 +570,8 @@ export default function Home() {
               Make evidence travel.
             </h2>
             <p>
-              The architecture executes parallel sandboxes, independent reviewers, mathematical reconciliation,
-              and iterative business/UI review loops before producing the concise HTML dashboard.
+              Watch two independent calculations take different paths, meet at a numeric comparison, and release
+              only the values that agree before the dashboard is published.
             </p>
           </div>
           <div className="hero-index" aria-label="Experiment condition B">
@@ -744,43 +767,43 @@ export default function Home() {
                   <span className="column-label">PYTHON / PANDAS BRANCH</span>
                   <AgentNode
                     id="04"
-                    title="Python Agent"
-                    detail="Vector Analysis"
+                  title="Independent calculation B"
+                  detail="Recomputes from municipal rows"
                     active={latestNode === "python_agent"}
                   />
                   <span className="down-link-sm" />
                   <div className="sandbox-node">
-                    <small>PYTHON SANDBOX</small>
-                    <span>Runs? Execution</span>
+                    <small>PYTHON CALCULATION</small>
+                    <span>Runs separately</span>
                   </div>
                   <span className="down-link-sm" />
                   <AgentNode
                     id="05"
-                    title="Python Reviewer"
-                    detail="Good? Bounds QA"
+                    title="Python result check"
+                    detail="Complete and usable?"
                     active={latestNode === "python_reviewer"}
                   />
                 </div>
 
                 {/* Right Column: SQL Path */}
                 <div className="graph-column">
-                  <span className="column-label">SQL SPECIALIST BRANCH</span>
+                  <span className="column-label">DATABASE CALCULATION · PATH A</span>
                   <AgentNode
                     id="02"
-                    title="SQL Specialist"
-                    detail="DuckDB Querying"
+                    title="Independent calculation A"
+                    detail="Aggregates in the database"
                     active={latestNode === "sql_agent"}
                   />
                   <span className="down-link-sm" />
                   <div className="sandbox-node">
-                    <small>SQL SANDBOX</small>
-                    <span>Runs? Read-Only</span>
+                    <small>DATABASE CALCULATION</small>
+                    <span>Read-only and separate</span>
                   </div>
                   <span className="down-link-sm" />
                   <AgentNode
                     id="03"
-                    title="SQL Reviewer"
-                    detail="Good? Syntax QA"
+                    title="SQL result check"
+                    detail="Complete and usable?"
                     active={latestNode === "sql_reviewer"}
                   />
                 </div>
@@ -796,8 +819,8 @@ export default function Home() {
               <div className="graph-single">
                 <AgentNode
                   id="06"
-                  title="Results Match Reconciler"
-                  detail="The Results Match? (<1e-9)"
+                  title="Compare both results"
+                  detail="Only matching numbers move forward"
                   active={latestNode === "reconciliation_agent"}
                 />
               </div>
@@ -808,38 +831,38 @@ export default function Home() {
               <div className="bottom-review-flow">
                 <AgentNode
                   id="07"
-                  title="Dashboard Agent"
-                  detail="Python/HTML Creator"
+                  title="Build the dashboard"
+                  detail="Uses approved numbers only"
                   active={latestNode === "dashboard_agent"}
                 />
                 <span className="right-link-arrow">➔</span>
                 <AgentNode
                   id="08"
-                  title="Business Reviewer"
-                  detail="According to Specs?"
+                  title="Check the answer"
+                  detail="Does it answer the request?"
                   active={latestNode === "business_reviewer"}
                 />
                 <span className="right-link-arrow">➔</span>
                 <AgentNode
                   id="09"
-                  title="UI / UX Agent"
-                  detail="Visually Appealing?"
+                  title="Check readability"
+                  detail="Can people understand it?"
                   active={latestNode === "ui_ux_reviewer"}
                 />
                 <span className="right-link-arrow">➔</span>
                 <AgentNode
                   id="10"
-                  title="Final Product"
-                  detail="HTML Dashboard"
+                  title="Publish certified result"
+                  detail="Or fail closed with evidence"
                   active={latestNode === "final_editor"}
                 />
               </div>
             </div>
 
             <div className="method-foot">
-              <span>Iterative review loop</span>
-              <span>Parallel sandboxes</span>
-              <span>Zero-hallucination gate</span>
+              <span>Two independent paths</span>
+              <span>Numbers compared before release</span>
+              <span>Safe fallback from approved evidence</span>
             </div>
           </article>
         </section>
@@ -964,19 +987,19 @@ export default function Home() {
             <div>
               <span className="card-index">04</span>
               <div>
-                <small>REAL-TIME COMMUNICATION</small>
-                <h3>Live Inter-Agent Message Stream ({interAgentMessages.length} Transfers)</h3>
+                <small>WHAT IS HAPPENING NOW</small>
+                <h3>Live decision trail ({interAgentMessages.length} handoffs)</h3>
               </div>
             </div>
-            <span className="tag tag-custom">LIVE DIALOGUE & TRANSFERS</span>
+            <span className="tag tag-custom">LIVE</span>
           </div>
 
           <div className="message-stream-container">
             {interAgentMessages.length === 0 ? (
               <div className="stream-empty">
                 <p>
-                  No inter-agent messages yet. Start a benchmark run to watch agents exchange metric contracts,
-                  sandbox results, review verdicts, and approvals in real time.
+                  Start a run to watch the request split into two calculations, see whether the numbers agree,
+                  and follow the release decision in real time.
                 </p>
               </div>
             ) : (
@@ -986,8 +1009,8 @@ export default function Home() {
                     <div className="message-meta">
                       <span className="msg-seq">#{index + 1}</span>
                       <span className="msg-route">
-                        <strong>{msg.sender.replace("_", " ")}</strong> ➔{" "}
-                        <strong>{msg.receiver.replace("_", " ")}</strong>
+                        <strong>{plainRoleNames[msg.sender] ?? msg.sender.replaceAll("_", " ")}</strong> ➔{" "}
+                        <strong>{plainRoleNames[msg.receiver] ?? msg.receiver.replaceAll("_", " ")}</strong>
                       </span>
                       <span className={`badge-verdict verdict-badge-${msg.verdict.toLowerCase()}`}>
                         {msg.verdict}
@@ -997,7 +1020,7 @@ export default function Home() {
                     <p className="msg-summary">{msg.summary}</p>
                     {msg.payload && Object.keys(msg.payload).length > 0 && (
                       <details className="msg-payload-details">
-                        <summary>Inspect Transferred Payload</summary>
+                        <summary>See supporting details</summary>
                         <pre>
                           <code>{JSON.stringify(msg.payload, null, 2)}</code>
                         </pre>

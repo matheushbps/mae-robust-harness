@@ -205,3 +205,28 @@ def test_robust_rejects_prompt_override_for_deterministic_role(
             lambda *_args: None,
             agent_prompts={"sql_reviewer": "This cannot affect a deterministic reviewer."},
         )
+
+
+def test_robust_uses_certified_fallback_when_final_editor_returns_no_text(
+    dataset_path: Path, tmp_path: Path
+) -> None:
+    events: list[tuple[str, str]] = []
+
+    class EmptyFinalEditorModel(StubModel):
+        def complete(
+            self, role: str, system: str, user: str, max_tokens: int | None = None
+        ) -> LLMTrace:
+            del system, user, max_tokens
+            return LLMTrace(role=role, content="", completion_tokens=512)
+
+    harness = RobustHarness(EmptyFinalEditorModel(), settings_for(tmp_path, dataset_path))
+    result = harness.run(
+        "empty-final-editor",
+        "[TASK:mae-certified-release-v2] Analyze agricultural changes in the controlled fixture dataset.",
+        lambda node, event_type, _message, _data=None: events.append((node, event_type)),
+    )
+
+    assert result["terminal_status"] == "completed"
+    assert "Certified evidence release" in result["narrative"]
+    assert "[sql:" in result["narrative"]
+    assert ("final_editor", "deterministic_fallback") in events

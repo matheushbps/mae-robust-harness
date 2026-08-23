@@ -86,6 +86,38 @@ def prompt_override_manifest(agent_prompts: dict[str, str]) -> list[dict[str, st
     ]
 
 
+def render_certified_fallback(evidence: list[dict[str, Any]]) -> str:
+    ranked = sorted(
+        evidence,
+        key=lambda item: abs(float(item.get("change_percent") or 0.0)),
+        reverse=True,
+    )[:8]
+    lines = [
+        "## Certified evidence release",
+        "",
+        "The SQL and Python paths independently reproduced every released metric and the "
+        "agreement gate approved the canonical evidence set.",
+        "",
+        "### Largest verified changes",
+        "",
+    ]
+    for item in ranked:
+        change = item.get("change_percent")
+        change_text = "not comparable" if change is None else f"{float(change):+.2f}%"
+        lines.append(
+            f"- {item.get('crop_name')} · {item.get('metric')}: {change_text} "
+            f"[{item.get('evidence_id')}]"
+        )
+    lines.extend(
+        [
+            "",
+            "The narrative model returned no visible text after bounded retries, so this "
+            "deterministic summary was generated exclusively from approved evidence.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def build_release_certificate(state: RobustState) -> dict[str, Any]:
     evidence = state.get("approved_evidence", [])
     keys = [str(item.get("match_key", "")) for item in evidence]
@@ -566,18 +598,46 @@ class _GraphRun:
         )
         evidence = state.get("approved_evidence", [])
         briefing = state.get("dashboard_briefing", {})
-        report, trace = self._text_call(
-            node,
-            "Write a concise executive analysis synthesizing the 2019–2024 agricultural "
-            "dynamics across all analyzed crops according to your role.\n"
-            "Cite evidence IDs in brackets after every material number (e.g. [sql:40099:production_tonnes]). "
-            "Organize into: 1. Executive Summary, 2. Key Crop Shifts, 3. Strategic Business Implications. "
-            "If validation failed, explain the failure instead of presenting unsupported conclusions.\n"
-            f"REQUEST:\n{state['prompt']}\nSTATUS:\n{state.get('terminal_status', 'completed')}\n"
-            f"FAILURE:\n{state.get('failure_reason', '')}\nAPPROVED EVIDENCE:\n"
-            f"{json.dumps(evidence)}",
-            max_tokens=min(self.settings.max_completion_tokens, 1024),
-        )
+        fallback_message: dict[str, Any] | None = None
+        try:
+            report, trace = self._text_call(
+                node,
+                "Write a concise executive analysis synthesizing the 2019–2024 agricultural "
+                "dynamics across all analyzed crops according to your role.\n"
+                "Cite evidence IDs in brackets after every material number "
+                "(e.g. [sql:40099:production_tonnes]). "
+                "Organize into: 1. Executive Summary, 2. Key Crop Shifts, "
+                "3. Strategic Business Implications. If validation failed, explain the failure "
+                "instead of presenting unsupported conclusions.\n"
+                f"REQUEST:\n{state['prompt']}\nSTATUS:\n{state.get('terminal_status', 'completed')}\n"
+                f"FAILURE:\n{state.get('failure_reason', '')}\nAPPROVED EVIDENCE:\n"
+                f"{json.dumps(evidence)}",
+                max_tokens=min(self.settings.max_completion_tokens, 1024),
+            )
+        except RuntimeError as error:
+            report = render_certified_fallback(evidence)
+            trace = {
+                "role": node,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "reasoning_tokens": 0,
+                "latency_seconds": 0.0,
+                "finish_reason": "deterministic_fallback",
+            }
+            self.emit(
+                node,
+                "deterministic_fallback",
+                "Narrative retries were exhausted; publishing a summary from certified evidence.",
+                {"error": str(error), "approved_metrics": len(evidence)},
+            )
+            fallback_message = self.emit_transfer(
+                "final_editor",
+                "ui_console",
+                "The writing model returned no text. Publishing a safe summary built only "
+                f"from {len(evidence)} approved metrics.",
+                {"approved_metrics": len(evidence)},
+                verdict="SAFE_FALLBACK",
+            )
         terminal_status = state.get("terminal_status", "completed")
         evidence_items = [EvidenceItem.model_validate(item) for item in evidence]
         validation_items = [
@@ -609,7 +669,7 @@ class _GraphRun:
             "final_report": report,
             "terminal_status": terminal_status,
             "dashboard_path": str(path),
-            "inter_agent_messages": [msg],
+            "inter_agent_messages": [item for item in (fallback_message, msg) if item],
             "llm_traces": [trace],
         }
 
