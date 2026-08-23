@@ -274,8 +274,10 @@ def _metric_label(metric: str) -> str:
 def render_dashboard_html(
     payload: dict[str, Any],
     narrative: str | None = None,
+    dashboard_briefing: dict[str, Any] | None = None,
 ) -> str:
-    title = str(payload.get("title", "Brazilian Municipal Crop Intelligence"))
+    briefing = dashboard_briefing or payload.get("dashboard_briefing") or {}
+    title = str(briefing.get("title") or payload.get("title", "Brazilian Municipal Crop Intelligence"))
     source = str(payload.get("source", "IBGE SIDRA PAM table 5457"))
     evidence_list: list[dict[str, Any]] = payload.get("evidence", [])
     validation_list: list[dict[str, Any]] = payload.get("validation", [])
@@ -393,6 +395,26 @@ def render_dashboard_html(
               <td>{html.escape(v.get('message', ''))}</td>
             </tr>"""
         )
+
+    briefing_section = ""
+    if briefing and (briefing.get("subtitle") or briefing.get("insights")):
+        b_subtitle = html.escape(str(briefing.get("subtitle", "")))
+        b_insights = briefing.get("insights", [])
+        if isinstance(b_insights, list) and b_insights:
+            b_insights_html = "\n".join(
+                f"<li><strong>Key Takeaway {idx+1}:</strong> {html.escape(str(item))}</li>"
+                for idx, item in enumerate(b_insights)
+            )
+        else:
+            b_insights_html = ""
+        briefing_section = f"""<section class="card" id="dashboard-briefing">
+          <div class="card-header">
+            <h2>Executive Overview & Strategic Highlights</h2>
+            <span class="badge badge-accent">Dashboard Architect</span>
+          </div>
+          {f'<p class="briefing-subtitle">{b_subtitle}</p>' if b_subtitle else ''}
+          {f'<ul class="briefing-insights">{b_insights_html}</ul>' if b_insights_html else ''}
+        </section>"""
 
     narrative_section = ""
     if narrative:
@@ -667,6 +689,29 @@ def render_dashboard_html(
       color: var(--accent);
     }}
     
+    /* Briefing */
+    .briefing-subtitle {{
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      margin-bottom: 1.25rem;
+      line-height: 1.6;
+    }}
+    .briefing-insights {{
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 0.85rem;
+    }}
+    .briefing-insights li {{
+      background: var(--surface-hover);
+      border-left: 3px solid var(--accent);
+      padding: 0.85rem 1.1rem;
+      border-radius: 0 8px 8px 0;
+      font-size: 0.88rem;
+      color: #e2e8f0;
+      line-height: 1.5;
+    }}
+
     /* Narrative */
     .narrative-content p {{
       margin-bottom: 1rem;
@@ -688,6 +733,7 @@ def render_dashboard_html(
     @media (max-width: 768px) {{
       body {{ padding: 1rem; }}
       .chart-row {{ grid-template-columns: 1fr; }}
+      .briefing-insights {{ grid-template-columns: 1fr; }}
     }}
     @media print {{
       body {{ background: #fff; color: #000; padding: 0; }}
@@ -708,6 +754,8 @@ def render_dashboard_html(
       <span class="badge unit-badge">{html.escape(created_at)}</span>
     </div>
   </header>
+
+  {briefing_section}
 
   <section id="kpis">
     {"".join(kpi_cards)}
@@ -757,10 +805,10 @@ def render_dashboard_html(
     </div>
   </section>
 
-  <section class="card" id="validation-ledger">
+  <section class="card" id="validation">
     <div class="card-header">
-      <h2>Validation & Quality Gates</h2>
-      <span class="badge badge-pass">{len(validation_list)} Checks</span>
+      <h2>Quality & Integrity Gates</h2>
+      <span class="badge badge-accent">Automated Checks</span>
     </div>
     <div class="table-wrapper">
       <table>
@@ -768,7 +816,7 @@ def render_dashboard_html(
           <tr>
             <th>Check ID</th>
             <th>Status</th>
-            <th>Verification Rule</th>
+            <th>Details</th>
           </tr>
         </thead>
         <tbody>
@@ -780,10 +828,8 @@ def render_dashboard_html(
 
   <script>
     function filterCharts(metric) {{
-      const buttons = document.querySelectorAll('#chart-filters .filter-btn');
-      buttons.forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
       event.target.classList.add('active');
-      
       const rows = document.querySelectorAll('#chart-container .chart-row');
       rows.forEach(r => {{
         if (metric === 'all' || r.getAttribute('data-metric') === metric) {{
@@ -804,6 +850,7 @@ def write_dashboard_artifact(
     evidence: list[EvidenceItem],
     validation: list[ValidationCheck],
     narrative: str | None = None,
+    dashboard_briefing: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -811,7 +858,7 @@ def write_dashboard_artifact(
     html_target = output_dir / "dashboard.html"
 
     payload: dict[str, Any] = {
-        "title": "Brazilian Municipal Crop Intelligence",
+        "title": (dashboard_briefing or {}).get("title") or "Brazilian Municipal Crop Intelligence",
         "source": "IBGE SIDRA PAM table 5457",
         "evidence": [item.model_dump(mode="json") for item in evidence],
         "validation": [item.model_dump(mode="json") for item in validation],
@@ -820,6 +867,8 @@ def write_dashboard_artifact(
             {"id": "start-end-comparison", "type": "slope", "metric": "end_value"},
         ],
     }
+    if dashboard_briefing:
+        payload["dashboard_briefing"] = dashboard_briefing
     if narrative:
         payload["narrative"] = narrative
     if metadata:
@@ -827,7 +876,7 @@ def write_dashboard_artifact(
 
     json_target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     
-    html_content = render_dashboard_html(payload, narrative=narrative)
+    html_content = render_dashboard_html(payload, narrative=narrative, dashboard_briefing=dashboard_briefing)
     html_target.write_text(html_content, encoding="utf-8")
     
     return json_target

@@ -319,19 +319,35 @@ class _GraphRun:
         self.emit(
             node,
             "started",
-            "Building artifacts from approved evidence only.",
+            "Designing visual layout and strategic briefing from approved evidence.",
             {"skills": self._skill_names(node)},
         )
         evidence = [EvidenceItem.model_validate(item) for item in state["approved_evidence"]]
         checks = [ValidationCheck.model_validate(item) for item in state["validation_checks"]]
+        briefing, trace = self._json_call(
+            node,
+            "Generate visual executive briefing metadata for this agricultural dashboard. "
+            "Return a JSON object with keys: title, subtitle, insights, and visual_theme.\n"
+            f"EVIDENCE SAMPLE:\n{json.dumps([item.model_dump(mode='json') for item in evidence[:10]])}",
+        )
         path = write_dashboard_artifact(
             self.output_dir,
             evidence,
             checks,
+            dashboard_briefing=briefing,
             metadata={"harness": "Robust Harness (Condition B)", "run_id": self.run_id},
         )
-        self.emit(node, "completed", "Dashboard contract artifact created.", {"artifact": str(path)})
-        return {"dashboard_path": str(path)}
+        self.emit(
+            node,
+            "completed",
+            "Dashboard artifact created.",
+            {"artifact": str(path), "title": briefing.get("title")},
+        )
+        return {
+            "dashboard_path": str(path),
+            "dashboard_briefing": briefing,
+            "llm_traces": [trace],
+        }
 
     def visual_review(self, state: RobustState) -> dict[str, Any]:
         node = "visual_reviewer"
@@ -362,10 +378,11 @@ class _GraphRun:
             {"skills": self._skill_names(node)},
         )
         evidence = state.get("approved_evidence", [])
+        briefing = state.get("dashboard_briefing", {})
         report, trace = self._text_call(
             node,
             "Write a concise executive analysis synthesizing the 2019–2024 agricultural "
-            "dynamics across all analyzed crops. "
+            "dynamics across all analyzed crops according to your role.\n"
             "Cite evidence IDs in brackets after every material number (e.g. [sql:40099:production_tonnes]). "
             "Organize into: 1. Executive Summary, 2. Key Crop Shifts, 3. Strategic Business Implications. "
             "If validation failed, explain the failure instead of presenting unsupported conclusions.\n"
@@ -375,7 +392,6 @@ class _GraphRun:
             max_tokens=self.settings.max_completion_tokens,
         )
         terminal_status = state.get("terminal_status", "completed")
-        # Update dashboard artifact to embed final narrative
         evidence_items = [EvidenceItem.model_validate(item) for item in evidence]
         validation_items = [
             ValidationCheck.model_validate(item) for item in state.get("validation_checks", [])
@@ -385,6 +401,7 @@ class _GraphRun:
             evidence_items,
             validation_items,
             narrative=report,
+            dashboard_briefing=briefing,
             metadata={"harness": "Robust Harness (Condition B)", "run_id": self.run_id},
         )
         self.emit(node, "completed", "Final report created.", {"terminal_status": terminal_status})

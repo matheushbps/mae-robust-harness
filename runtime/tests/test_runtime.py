@@ -43,6 +43,13 @@ class StubModel:
                 "comparison_period": [2019, 2024],
                 "risks": ["missing values"],
             }
+        elif role == "dashboard_engineer":
+            payload = {
+                "title": "Municipal Crop Intelligence",
+                "subtitle": "Strategic Executive Highlights",
+                "insights": ["Planted area increased in grains", "Yield efficiency improved"],
+                "visual_theme": "cyber_dark",
+            }
         else:
             payload = {
                 "selected_checks": ["independent totals"],
