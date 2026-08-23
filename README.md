@@ -5,7 +5,10 @@ This repository is the graph-engineered variant of the MAE harness experiment. I
 ## Local interface
 
 ```bash
-cp .env.example .env.local
+# Set these in your shell or local secret manager; no environment files are committed.
+export AGENT_RUNTIME_URL=http://127.0.0.1:8788
+export MODEL_BASE_URL=http://127.0.0.1:1234/v1
+export MODEL_ID=qwen/qwen3.6-35b-a3b
 npm install
 npm run dev
 ```

@@ -42,7 +42,7 @@ Apply least privilege. All writes stay under `outputs/`; all data access is read
 - Frontend: React 19, TypeScript, vinext, Node 22+.
 - Runtime: Python, FastAPI, LangGraph, DuckDB, HTTPX, Pydantic.
 - Simple runtime uses port 8787; robust runtime uses port 8788.
-- The local Qwen server uses an OpenAI-compatible API configured only through ignored environment files.
+- The local Qwen server uses an OpenAI-compatible API configured through the shell or a local secret manager. Environment files are never versioned.
 
 ### State
 
@@ -95,7 +95,9 @@ Do not replace the graph with a single prompt, an unbounded ReAct loop, or opaqu
 npm install
 cd runtime && python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-cp .env.example .env
+export AGENT_RUNTIME_URL=http://127.0.0.1:8788
+export MODEL_BASE_URL=http://127.0.0.1:1234/v1
+export MODEL_ID=qwen/qwen3.6-35b-a3b
 ```
 
 ## Verification
