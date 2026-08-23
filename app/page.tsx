@@ -175,6 +175,9 @@ type RunSnapshot = {
   status: "queued" | "running" | "completed" | "failed";
   events: RunEvent[];
   error?: string | null;
+  result?: {
+    artifacts?: string[];
+  } | null;
 };
 
 const gateNodes: Record<string, string> = {
@@ -275,6 +278,7 @@ export default function Home() {
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
+  const [artifactReady, setArtifactReady] = useState(false);
 
   // Fetch initial default agent prompts from runtime if available
   useEffect(() => {
@@ -347,6 +351,7 @@ export default function Home() {
         if (!response.ok) return;
         const payload = (await response.json()) as RunSnapshot;
         setRunEvents(payload.events ?? []);
+        setArtifactReady((payload.result?.artifacts?.length ?? 0) > 0);
         if (payload.status === "completed") {
           setRunState("completed");
           setRunMessage("Graph reached the terminal editor node with approved evidence.");
@@ -444,6 +449,7 @@ export default function Home() {
     setRunState("submitting");
     setRunMessage("Dispatching graph execution to local LangGraph runtime…");
     setRunEvents([]);
+    setArtifactReady(false);
     try {
       const response = await fetch("/api/run", {
         method: "POST",
@@ -1078,7 +1084,7 @@ export default function Home() {
                 <strong>{runEvents.length} graph events</strong>
               </div>
             </div>
-            {runId && (
+            {runId && artifactReady && (
               <div
                 style={{
                   marginTop: "1.25rem",
@@ -1106,6 +1112,11 @@ export default function Home() {
                   Open Interactive HTML Dashboard <ArrowIcon />
                 </a>
               </div>
+            )}
+            {runId && !artifactReady && (
+              <p className="run-message" role="status">
+                Dashboard will appear after the terminal artifact is published.
+              </p>
             )}
           </article>
 

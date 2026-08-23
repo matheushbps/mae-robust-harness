@@ -40,3 +40,11 @@ test("keeps provider credentials out of the browser bundle", async () => {
   assert.match(statusRoute, /MODEL_BASE_URL/);
   assert.doesNotMatch(`${page}\n${route}\n${statusRoute}`, /100\.79\.155\.79/);
 });
+
+test("does not expose the dashboard link before the runtime publishes an artifact", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /artifactReady/);
+  assert.match(page, /setArtifactReady\(\(payload\.result\?\.artifacts\?\.length \?\? 0\) > 0\)/);
+  assert.match(page, /runId && artifactReady &&/);
+  assert.match(page, /Dashboard will appear after the terminal artifact is published/);
+});
