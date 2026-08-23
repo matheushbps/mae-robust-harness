@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import operator
 import sqlite3
 from collections.abc import Callable
@@ -20,10 +21,12 @@ from .analytics import (
     validate_dashboard,
     write_dashboard_artifact,
 )
+from .code_execution import execute_generated_python, execute_generated_sql
 from .config import RUNTIME_ROOT, Settings
 from .contracts import EvidenceItem, LLMTrace, ValidationCheck
 from .model_client import ModelGateway
 from .skill_library import load_skill, render_agent_skills
+from .temporal_contract import REQUIRED_COLUMNS, validate_temporal_rows
 
 Emit = Callable[[str, str, str, dict[str, Any] | None], None]
 
@@ -149,12 +152,19 @@ class RobustState(TypedDict, total=False):
     agent_prompts: dict[str, str]
     contract: dict[str, Any]
     sql_plan: dict[str, Any]
+    sql_execution: dict[str, Any]
+    sql_diagnostics: list[dict[str, Any]]
+    sql_repair_count: int
     sql_evidence: list[dict[str, Any]]
     sql_review: dict[str, Any]
     python_plan: dict[str, Any]
+    python_execution: dict[str, Any]
+    python_diagnostics: list[dict[str, Any]]
+    python_repair_count: int
     python_evidence: list[dict[str, Any]]
     python_review: dict[str, Any]
     approved_evidence: list[dict[str, Any]]
+    temporal_rows: list[dict[str, Any]]
     validation_checks: Annotated[list[dict[str, Any]], operator.add]
     inter_agent_messages: Annotated[list[dict[str, Any]], operator.add]
     llm_traces: Annotated[list[dict[str, Any]], operator.add]
@@ -349,11 +359,34 @@ class _GraphRun:
     def sql_agent(self, state: RobustState) -> dict[str, Any]:
         node = "sql_agent"
         self.emit(node, "started", "Formulating DuckDB SQL queries.", {"skills": self._skill_names(node)})
-        plan, trace = self._json_call(
-            node,
-            "Formulate SQL strategy. Return keys selected_metrics, comparison_period, and risks.\n"
-            f"CONTRACT:\n{json.dumps(state['contract'])}",
-        )
+        temporal_task = "[TASK:mae-temporal-window-analysis-v3]" in state["prompt"]
+        if temporal_task:
+            diagnostics = state.get("sql_diagnostics", [])
+            prior_code = str(state.get("sql_plan", {}).get("code", ""))
+            repair_context = (
+                f"\nREJECTED CODE:\n{prior_code}\nDIAGNOSTICS:\n{json.dumps(diagnostics)}"
+                if diagnostics
+                else ""
+            )
+            plan, trace = self._json_call(
+                node,
+                "Generate the complete DuckDB SQL implementation. Return keys code and assumptions. "
+                "code must be one read-only SELECT/WITH query over crop_metrics and return exactly: "
+                f"{', '.join(REQUIRED_COLUMNS)}. Use staged CTEs plus LAG, DENSE_RANK, and "
+                "AVG ... ROWS BETWEEN 2 PRECEDING AND CURRENT ROW.\n"
+                "TABLE crop_metrics(municipality_code, municipality_name, state_code, year, "
+                "crop_code, crop_name, planted_area_ha, harvested_area_ha, production_tonnes, "
+                "yield_kg_ha, production_value_thousand_brl).\n"
+                f"FROZEN REQUEST:\n{state['prompt']}\nCONTRACT:\n{json.dumps(state['contract'])}"
+                f"{repair_context}",
+                max_tokens=3072,
+            )
+        else:
+            plan, trace = self._json_call(
+                node,
+                "Formulate SQL strategy. Return keys selected_metrics, comparison_period, and risks.\n"
+                f"CONTRACT:\n{json.dumps(state['contract'])}",
+            )
         msg = self.emit_transfer(
             "sql_agent",
             "sql_sandbox",
@@ -367,6 +400,20 @@ class _GraphRun:
     def sql_sandbox(self, state: RobustState) -> dict[str, Any]:
         node = "sql_sandbox"
         self.emit(node, "started", "Executing read-only DuckDB SQL query in sandbox.", None)
+        if "[TASK:mae-temporal-window-analysis-v3]" in state["prompt"]:
+            execution = execute_generated_sql(
+                self.settings.dataset_path, str(state.get("sql_plan", {}).get("code", "")), max_rows=100
+            )
+            raw_execution = execution.model_dump(mode="json")
+            msg = self.emit_transfer(
+                "sql_sandbox",
+                "sql_reviewer",
+                f"Generated SQL attempt {execution.status} ({len(execution.rows)} rows).",
+                {"status": execution.status, "code_sha256": execution.code_sha256},
+                verdict="EXEC_SUCCESS" if execution.status == "completed" else "EXEC_REJECTED",
+            )
+            self.emit(node, "completed", "Generated SQL attempt finished.", raw_execution)
+            return {"sql_execution": raw_execution, "inter_agent_messages": [msg]}
         evidence = run_sql_analysis(self.settings.dataset_path)
         raw_items = [item.model_dump(mode="json") for item in evidence]
         msg = self.emit_transfer(
@@ -382,6 +429,53 @@ class _GraphRun:
     def sql_reviewer(self, state: RobustState) -> dict[str, Any]:
         node = "sql_reviewer"
         self.emit(node, "started", "Auditing SQL query results and schema constraints.", None)
+        if "[TASK:mae-temporal-window-analysis-v3]" in state["prompt"]:
+            execution = state.get("sql_execution", {})
+            diagnostics = list(execution.get("diagnostics", []))
+            code = str(state.get("sql_plan", {}).get("code", "")).lower()
+            if execution.get("status") == "completed":
+                diagnostics.extend(
+                    item.model_dump(mode="json")
+                    for item in validate_temporal_rows(
+                        execution.get("rows", []), str(execution.get("dataset_sha256", ""))
+                    )
+                )
+            for function_name in ("lag", "dense_rank", "rows between 2 preceding"):
+                if function_name not in code:
+                    diagnostics.append(
+                        {
+                            "code": "missing_window_operation",
+                            "message": f"Generated SQL must contain {function_name}.",
+                            "details": {"operation": function_name},
+                        }
+                    )
+            passed = not diagnostics
+            repair_count = state.get("sql_repair_count", 0)
+            status = "passed" if passed else (
+                "retry" if repair_count < self.settings.max_repair_attempts else "exhausted"
+            )
+            verdict = "APPROVED" if passed else ("REPAIR" if status == "retry" else "EXHAUSTED")
+            msg = self.emit_transfer(
+                "sql_reviewer",
+                "reconciliation_gate" if passed else (
+                    "sql_agent" if status == "retry" else "failed_with_evidence"
+                ),
+                f"SQL checker {verdict}: {len(diagnostics)} issue(s).",
+                {"status": status, "diagnostics": diagnostics},
+                verdict=verdict,
+            )
+            self.emit(
+                node,
+                "completed" if passed else "branch_repair",
+                f"SQL review {status}.",
+                {"diagnostics": diagnostics},
+            )
+            return {
+                "sql_review": {"passed": passed, "status": status},
+                "sql_diagnostics": diagnostics,
+                "sql_repair_count": repair_count + (1 if status == "retry" else 0),
+                "inter_agent_messages": [msg],
+            }
         evidence = state.get("sql_evidence", [])
         passed = bool(evidence) and len(evidence) >= 4
         review_payload = {
@@ -409,11 +503,34 @@ class _GraphRun:
             "Formulating independent Python analytics strategy.",
             {"skills": self._skill_names(node)},
         )
-        plan, trace = self._json_call(
-            node,
-            "Formulate Python calculation plan. Return keys selected_checks, comparison_period, and risks.\n"
-            f"CONTRACT:\n{json.dumps(state['contract'])}",
-        )
+        temporal_task = "[TASK:mae-temporal-window-analysis-v3]" in state["prompt"]
+        if temporal_task:
+            diagnostics = state.get("python_diagnostics", [])
+            prior_code = str(state.get("python_plan", {}).get("code", ""))
+            repair_context = (
+                f"\nREJECTED CODE:\n{prior_code}\nDIAGNOSTICS:\n{json.dumps(diagnostics)}"
+                if diagnostics
+                else ""
+            )
+            plan, trace = self._json_call(
+                node,
+                "Generate an independent pure-Python implementation. Return keys code and assumptions. "
+                "code must define analyze(rows) and return dictionaries with exactly: "
+                f"{', '.join(REQUIRED_COLUMNS)}. Imports, files, network, SQL results, and the "
+                "national_crop_year view are unavailable. Input rows contain municipality_code, "
+                "crop_code, crop_name, year, planted_area_ha, harvested_area_ha, production_tonnes, "
+                "and production_value_thousand_brl.\n"
+                f"FROZEN REQUEST:\n{state['prompt']}\nCONTRACT:\n{json.dumps(state['contract'])}"
+                f"{repair_context}",
+                max_tokens=3072,
+            )
+        else:
+            plan, trace = self._json_call(
+                node,
+                "Formulate Python calculation plan. Return keys selected_checks, "
+                "comparison_period, and risks.\n"
+                f"CONTRACT:\n{json.dumps(state['contract'])}",
+            )
         msg = self.emit_transfer(
             "python_agent",
             "python_sandbox",
@@ -427,6 +544,22 @@ class _GraphRun:
     def python_sandbox(self, state: RobustState) -> dict[str, Any]:
         node = "python_sandbox"
         self.emit(node, "started", "Executing independent Python vector analytics in sandbox.", None)
+        if "[TASK:mae-temporal-window-analysis-v3]" in state["prompt"]:
+            execution = execute_generated_python(
+                self.settings.dataset_path,
+                str(state.get("python_plan", {}).get("code", "")),
+                max_rows=100,
+            )
+            raw_execution = execution.model_dump(mode="json")
+            msg = self.emit_transfer(
+                "python_sandbox",
+                "python_reviewer",
+                f"Generated Python attempt {execution.status} ({len(execution.rows)} rows).",
+                {"status": execution.status, "code_sha256": execution.code_sha256},
+                verdict="EXEC_SUCCESS" if execution.status == "completed" else "EXEC_REJECTED",
+            )
+            self.emit(node, "completed", "Generated Python attempt finished.", raw_execution)
+            return {"python_execution": raw_execution, "inter_agent_messages": [msg]}
         evidence = run_python_analysis(self.settings.dataset_path)
         raw_items = [item.model_dump(mode="json") for item in evidence]
         msg = self.emit_transfer(
@@ -442,6 +575,43 @@ class _GraphRun:
     def python_reviewer(self, state: RobustState) -> dict[str, Any]:
         node = "python_reviewer"
         self.emit(node, "started", "Auditing Python computation bounds and mathematical types.", None)
+        if "[TASK:mae-temporal-window-analysis-v3]" in state["prompt"]:
+            execution = state.get("python_execution", {})
+            diagnostics = list(execution.get("diagnostics", []))
+            if execution.get("status") == "completed":
+                diagnostics.extend(
+                    item.model_dump(mode="json")
+                    for item in validate_temporal_rows(
+                        execution.get("rows", []), str(execution.get("dataset_sha256", ""))
+                    )
+                )
+            passed = not diagnostics
+            repair_count = state.get("python_repair_count", 0)
+            status = "passed" if passed else (
+                "retry" if repair_count < self.settings.max_repair_attempts else "exhausted"
+            )
+            verdict = "APPROVED" if passed else ("REPAIR" if status == "retry" else "EXHAUSTED")
+            msg = self.emit_transfer(
+                "python_reviewer",
+                "reconciliation_gate" if passed else (
+                    "python_agent" if status == "retry" else "failed_with_evidence"
+                ),
+                f"Python checker {verdict}: {len(diagnostics)} issue(s).",
+                {"status": status, "diagnostics": diagnostics},
+                verdict=verdict,
+            )
+            self.emit(
+                node,
+                "completed" if passed else "branch_repair",
+                f"Python review {status}.",
+                {"diagnostics": diagnostics},
+            )
+            return {
+                "python_review": {"passed": passed, "status": status},
+                "python_diagnostics": diagnostics,
+                "python_repair_count": repair_count + (1 if status == "retry" else 0),
+                "inter_agent_messages": [msg],
+            }
         evidence = state.get("python_evidence", [])
         passed = bool(evidence) and len(evidence) >= 4
         review_payload = {
@@ -465,6 +635,92 @@ class _GraphRun:
         node = "reconciliation_agent"
         load_skill("cross-method-reconciliation")
         self.emit(node, "started", "Reconciling independent SQL and Python calculations.", None)
+        if "[TASK:mae-temporal-window-analysis-v3]" in state["prompt"]:
+            if not (
+                state.get("sql_review", {}).get("passed")
+                and state.get("python_review", {}).get("passed")
+            ):
+                self.emit(
+                    node,
+                    "waiting",
+                    "One analytical branch is still being checked or corrected.",
+                    None,
+                )
+                return {"reconciliation_status": "waiting"}
+            sql_rows = state.get("sql_execution", {}).get("rows", [])
+            python_rows = state.get("python_execution", {}).get("rows", [])
+            python_by_key = {
+                (str(row.get("crop_code")), int(row.get("year"))): row for row in python_rows
+            }
+            mismatch_details: list[dict[str, Any]] = []
+            for sql_row in sql_rows:
+                key = (str(sql_row.get("crop_code")), int(sql_row.get("year")))
+                python_row = python_by_key.get(key)
+                if python_row is None:
+                    mismatch_details.append({"crop_code": key[0], "year": key[1], "field": "row"})
+                    continue
+                for field in REQUIRED_COLUMNS:
+                    left = sql_row.get(field)
+                    right = python_row.get(field)
+                    if isinstance(left, (int, float)) and not isinstance(left, bool):
+                        matches = right is not None and math.isclose(
+                            float(left), float(right), rel_tol=1e-9, abs_tol=1e-9
+                        )
+                    else:
+                        matches = left == right
+                    if not matches:
+                        denominator = max(abs(float(left or 0)), abs(float(right or 0)), 1.0)
+                        mismatch_details.append(
+                            {
+                                "crop_code": key[0],
+                                "year": key[1],
+                                "field": field,
+                                "sql_value": left,
+                                "python_value": right,
+                                "relative_error": (
+                                    abs(float(left or 0) - float(right or 0)) / denominator
+                                    if isinstance(left, (int, float)) and isinstance(right, (int, float))
+                                    else None
+                                ),
+                            }
+                        )
+            passed = len(sql_rows) == len(python_rows) == 42 and not mismatch_details
+            status = "matched" if passed else "exhausted"
+            verdict = "MATCH_CONFIRMED" if passed else "EXHAUSTED"
+            approved_evidence = (
+                [item.model_dump(mode="json") for item in run_sql_analysis(self.settings.dataset_path)]
+                if passed
+                else []
+            )
+            msg = self.emit_transfer(
+                "reconciliation_agent",
+                "dashboard_agent" if passed else "failed_with_evidence",
+                f"Temporal reconciliation {verdict}: {len(sql_rows) if passed else 0}/42 rows approved.",
+                {"status": status, "mismatches": mismatch_details[:20]},
+                verdict=verdict,
+            )
+            self.emit(
+                node,
+                "completed" if passed else "failed",
+                f"Temporal reconciliation: {status}",
+                {"approved_rows": len(sql_rows) if passed else 0},
+            )
+            return {
+                "approved_evidence": approved_evidence,
+                "temporal_rows": sql_rows if passed else [],
+                "validation_checks": [
+                    ValidationCheck(
+                        check_id="temporal:cross_method_agreement",
+                        passed=passed,
+                        message="SQL and Python agree on all 42 temporal rows."
+                        if passed
+                        else "SQL and Python temporal outputs differ.",
+                        details={"mismatches": mismatch_details[:20]},
+                    ).model_dump(mode="json")
+                ],
+                "reconciliation_status": status,
+                "inter_agent_messages": [msg],
+            }
         sql_evidence = [EvidenceItem.model_validate(item) for item in state.get("sql_evidence", [])]
         python_evidence = [EvidenceItem.model_validate(item) for item in state.get("python_evidence", [])]
         checks, approved = reconcile_evidence(sql_evidence, python_evidence, self.settings.numeric_tolerance)
@@ -516,6 +772,7 @@ class _GraphRun:
             "Return a JSON object with keys: title, subtitle, insights, and visual_theme. "
             "visual_theme must be an object with background and accent as six-digit hex colors.\n"
             f"ORIGINAL REQUEST:\n{state['prompt']}\n"
+            f"TEMPORAL RESULT SAMPLE:\n{json.dumps(state.get('temporal_rows', [])[:10])}\n"
             f"EVIDENCE SAMPLE:\n{json.dumps([item.model_dump(mode='json') for item in evidence[:10]])}",
         )
         attempts = state.get("dashboard_attempts", 0) + 1
@@ -526,6 +783,16 @@ class _GraphRun:
             dashboard_briefing=briefing,
             agent_prompts=self.agent_prompts,
             metadata={"harness": "Robust Harness (Condition B)", "run_id": self.run_id},
+            temporal_rows=state.get("temporal_rows", []),
+            generated_analysis={
+                "sql": state.get("sql_execution", {}),
+                "python": state.get("python_execution", {}),
+            },
+            temporal_label=(
+                f"{len(state.get('temporal_rows', []))} reconciled crop-year rows"
+                if state.get("temporal_rows")
+                else None
+            ),
         )
         msg = self.emit_transfer(
             "dashboard_agent",
@@ -591,6 +858,9 @@ class _GraphRun:
         self.emit("failed_with_evidence", "failed", reason, None)
         return {"terminal_status": "failed", "failure_reason": reason}
 
+    def branch_wait(self, _state: RobustState) -> dict[str, Any]:
+        return {}
+
     def final_product(self, state: RobustState) -> dict[str, Any]:
         node = "final_editor"
         self.emit(
@@ -614,7 +884,8 @@ class _GraphRun:
                 "instead of presenting unsupported conclusions.\n"
                 f"REQUEST:\n{state['prompt']}\nSTATUS:\n{state.get('terminal_status', 'completed')}\n"
                 f"FAILURE:\n{state.get('failure_reason', '')}\nAPPROVED EVIDENCE:\n"
-                f"{json.dumps(evidence)}",
+                f"{json.dumps(evidence)}\nRECONCILED TEMPORAL ROWS:\n"
+                f"{json.dumps(state.get('temporal_rows', []))}",
                 max_tokens=min(self.settings.max_completion_tokens, 1024),
             )
         except RuntimeError as error:
@@ -654,6 +925,16 @@ class _GraphRun:
             dashboard_briefing=briefing,
             agent_prompts=self.agent_prompts,
             metadata={"harness": "Robust Harness (Condition B)", "run_id": self.run_id},
+            temporal_rows=state.get("temporal_rows", []),
+            generated_analysis={
+                "sql": state.get("sql_execution", {}),
+                "python": state.get("python_execution", {}),
+            },
+            temporal_label=(
+                f"{len(state.get('temporal_rows', []))} reconciled crop-year rows"
+                if state.get("temporal_rows")
+                else None
+            ),
         )
         msg = self.emit_transfer(
             "final_editor",
@@ -690,6 +971,7 @@ class _GraphRun:
         builder.add_node("business_reviewer", self.business_reviewer)
         builder.add_node("ui_ux_reviewer", self.ui_ux_reviewer)
         builder.add_node("failed_with_evidence", self.failed_with_evidence)
+        builder.add_node("branch_wait", self.branch_wait)
         builder.add_node("final_product", self.final_product)
 
         # Top Flow
@@ -702,8 +984,20 @@ class _GraphRun:
         builder.add_edge("sql_sandbox", "sql_reviewer")
         builder.add_conditional_edges(
             "sql_reviewer",
-            lambda state: "reconciliation_gate" if state.get("sql_review", {}).get("passed") else "sql_agent",
-            {"reconciliation_gate": "reconciliation_gate", "sql_agent": "sql_agent"},
+            lambda state: (
+                "reconciliation_gate"
+                if state.get("sql_review", {}).get("passed")
+                else (
+                    "failed_with_evidence"
+                    if state.get("sql_review", {}).get("status") == "exhausted"
+                    else "sql_agent"
+                )
+            ),
+            {
+                "reconciliation_gate": "reconciliation_gate",
+                "sql_agent": "sql_agent",
+                "failed_with_evidence": "failed_with_evidence",
+            },
         )
 
         # Python Path
@@ -712,9 +1006,19 @@ class _GraphRun:
         builder.add_conditional_edges(
             "python_reviewer",
             lambda state: (
-                "reconciliation_gate" if state.get("python_review", {}).get("passed") else "python_agent"
+                "reconciliation_gate"
+                if state.get("python_review", {}).get("passed")
+                else (
+                    "failed_with_evidence"
+                    if state.get("python_review", {}).get("status") == "exhausted"
+                    else "python_agent"
+                )
             ),
-            {"reconciliation_gate": "reconciliation_gate", "python_agent": "python_agent"},
+            {
+                "reconciliation_gate": "reconciliation_gate",
+                "python_agent": "python_agent",
+                "failed_with_evidence": "failed_with_evidence",
+            },
         )
 
         # Fan-in Barrier: Reconcile when both reviews pass
@@ -722,11 +1026,13 @@ class _GraphRun:
             "reconciliation_gate",
             lambda state: {
                 "matched": "dashboard_agent",
+                "waiting": "branch_wait",
                 "retry": "business_agent",
                 "exhausted": "failed_with_evidence",
             }[state.get("reconciliation_status", "matched")],
             {
                 "dashboard_agent": "dashboard_agent",
+                "branch_wait": "branch_wait",
                 "business_agent": "business_agent",
                 "failed_with_evidence": "failed_with_evidence",
             },
@@ -751,6 +1057,7 @@ class _GraphRun:
         )
 
         builder.add_edge("failed_with_evidence", "final_product")
+        builder.add_edge("branch_wait", END)
         builder.add_edge("final_product", END)
         return builder
 
@@ -760,6 +1067,8 @@ class _GraphRun:
             "prompt": prompt,
             "agent_prompts": self.agent_prompts,
             "repair_count": 0,
+            "sql_repair_count": 0,
+            "python_repair_count": 0,
             "dashboard_attempts": 0,
             "validation_checks": [],
             "inter_agent_messages": [],
@@ -786,6 +1095,13 @@ class _GraphRun:
             "terminal_status": final_state.get("terminal_status", "completed"),
             "failure_reason": final_state.get("failure_reason"),
             "repair_count": final_state.get("repair_count", 0),
+            "sql_repair_count": final_state.get("sql_repair_count", 0),
+            "python_repair_count": final_state.get("python_repair_count", 0),
+            "generated_analysis": {
+                "sql": final_state.get("sql_execution", {}),
+                "python": final_state.get("python_execution", {}),
+            },
+            "temporal_rows": final_state.get("temporal_rows", []),
             "model_usage": summarize_usage(final_state.get("llm_traces", [])),
             "checkpoint_thread_id": self.run_id,
             "skills_used": sorted(

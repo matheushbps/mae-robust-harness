@@ -500,6 +500,53 @@ def render_dashboard_html(
           </div>
         </section>"""
 
+    temporal_section = ""
+    temporal_rows: list[dict[str, Any]] = payload.get("temporal_rows") or []
+    if temporal_rows:
+        temporal_columns = [
+            "crop_code",
+            "crop_name",
+            "year",
+            "production_tonnes",
+            "weighted_yield_kg_ha",
+            "yoy_production_pct",
+            "production_rank",
+            "trailing_3y_yield_kg_ha",
+            "yield_vs_trailing_pct",
+        ]
+        temporal_headers = "".join(
+            f"<th>{html.escape(column.replace('_', ' ').title())}</th>"
+            for column in temporal_columns
+        )
+        temporal_body = "".join(
+            "<tr>"
+            + "".join(
+                f"<td>{html.escape(str(row.get(column, '—') if row.get(column) is not None else '—'))}</td>"
+                for column in temporal_columns
+            )
+            + "</tr>"
+            for row in temporal_rows
+        )
+        temporal_label = html.escape(
+            str(payload.get("temporal_label") or f"{len(temporal_rows)} crop-year rows")
+        )
+        generated = payload.get("generated_analysis") or {}
+        branch_badges = "".join(
+            f'<span class="badge badge-accent">{html.escape(branch.upper())}: '
+            f'{html.escape(str((result or {}).get("status", "unknown")))}</span>'
+            for branch, result in generated.items()
+        )
+        temporal_section = f"""<section class="card" id="temporal-analysis">
+          <div class="card-header">
+            <h2>Prompt-Driven Temporal Analysis</h2>
+            <div class="header-meta">{branch_badges}</div>
+          </div>
+          <p class="briefing-subtitle">{temporal_label}</p>
+          <div class="table-wrapper">
+            <table><thead><tr>{temporal_headers}</tr></thead><tbody>{temporal_body}</tbody></table>
+          </div>
+        </section>"""
+
     rendered_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -866,6 +913,8 @@ def render_dashboard_html(
 
   {briefing_section}
 
+  {temporal_section}
+
   <section id="kpis">
     {"".join(kpi_cards)}
   </section>
@@ -967,6 +1016,9 @@ def write_dashboard_artifact(
     dashboard_briefing: dict[str, Any] | None = None,
     agent_prompts: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
+    temporal_rows: list[dict[str, Any]] | None = None,
+    generated_analysis: dict[str, Any] | None = None,
+    temporal_label: str | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     json_target = output_dir / "dashboard.json"
@@ -990,6 +1042,10 @@ def write_dashboard_artifact(
         payload["narrative"] = narrative
     if metadata:
         payload.update(metadata)
+    if temporal_rows:
+        payload["temporal_rows"] = temporal_rows
+        payload["generated_analysis"] = generated_analysis or {}
+        payload["temporal_label"] = temporal_label or f"{len(temporal_rows)} crop-year rows"
 
     json_target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     

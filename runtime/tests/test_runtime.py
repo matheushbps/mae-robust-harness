@@ -15,7 +15,7 @@ from mae_runtime.analytics import (
 )
 from mae_runtime.config import Settings
 from mae_runtime.contracts import LLMTrace
-from mae_runtime.dataset import build_fixture_database, estimate_dataset
+from mae_runtime.dataset import CROPS, build_database_from_rows, build_fixture_database, estimate_dataset
 from mae_runtime.graph import GRAPH_MERMAID, RobustHarness
 from mae_runtime.model_client import QwenClient
 
@@ -76,6 +76,110 @@ class StubModel:
         )
 
 
+TEMPORAL_SQL = """
+WITH annual AS (
+  SELECT crop_code, crop_name, year,
+         sum(production_tonnes) AS production_tonnes,
+         CASE WHEN sum(harvested_area_ha) > 0
+              THEN sum(production_tonnes) * 1000.0 / sum(harvested_area_ha) END
+           AS weighted_yield_kg_ha
+  FROM crop_metrics
+  GROUP BY crop_code, crop_name, year
+), changes AS (
+  SELECT *,
+         lag(production_tonnes) OVER (PARTITION BY crop_code ORDER BY year) AS prior_production,
+         dense_rank() OVER (PARTITION BY year ORDER BY production_tonnes DESC) AS production_rank
+  FROM annual
+), rolling AS (
+  SELECT *,
+         avg(weighted_yield_kg_ha) OVER (
+           PARTITION BY crop_code ORDER BY year ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+         ) AS trailing_3y_yield_kg_ha
+  FROM changes
+)
+SELECT crop_code, crop_name, year, production_tonnes, weighted_yield_kg_ha,
+       CASE WHEN prior_production > 0
+            THEN (production_tonnes / prior_production - 1) * 100 END AS yoy_production_pct,
+       production_rank,
+       trailing_3y_yield_kg_ha,
+       CASE WHEN trailing_3y_yield_kg_ha > 0
+            THEN (weighted_yield_kg_ha / trailing_3y_yield_kg_ha - 1) * 100 END
+         AS yield_vs_trailing_pct
+FROM rolling
+ORDER BY crop_code, year
+"""
+
+TEMPORAL_PYTHON = """
+def analyze(rows):
+    annual = {}
+    names = {}
+    for row in rows:
+        key = (row["crop_code"], row["year"])
+        names[row["crop_code"]] = row["crop_name"]
+        value = annual.setdefault(key, {"production": 0.0, "harvested": 0.0})
+        value["production"] = value["production"] + (row["production_tonnes"] or 0.0)
+        value["harvested"] = value["harvested"] + (row["harvested_area_ha"] or 0.0)
+    yields = {}
+    for key, value in annual.items():
+        yields[key] = value["production"] * 1000.0 / value["harvested"] if value["harvested"] else None
+    ranks = {}
+    for year in range(2019, 2025):
+        distinct = sorted(set(annual[(crop, year)]["production"] for crop in names), reverse=True)
+        rank_values = {}
+        for rank, value in enumerate(distinct, start=1):
+            rank_values[value] = rank
+        for crop in names:
+            ranks[(crop, year)] = rank_values[annual[(crop, year)]["production"]]
+    result = []
+    for crop in sorted(names):
+        history = []
+        previous = None
+        for year in range(2019, 2025):
+            key = (crop, year)
+            production = annual[key]["production"]
+            current_yield = yields[key]
+            history.append(current_yield)
+            window = history[max(0, len(history) - 3):]
+            trailing = sum(window) / len(window)
+            result.append({
+                "crop_code": crop,
+                "crop_name": names[crop],
+                "year": year,
+                "production_tonnes": production,
+                "weighted_yield_kg_ha": current_yield,
+                "yoy_production_pct": (production / previous - 1) * 100 if previous else None,
+                "production_rank": ranks[key],
+                "trailing_3y_yield_kg_ha": trailing,
+                "yield_vs_trailing_pct": (current_yield / trailing - 1) * 100 if trailing else None,
+            })
+            previous = production
+    return result
+"""
+
+
+class GeneratedRepairModel(StubModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: dict[str, int] = {}
+
+    def complete_json(
+        self, role: str, system: str, user: str, max_tokens: int | None = None
+    ) -> tuple[dict[str, Any], LLMTrace]:
+        self.calls[role] = self.calls.get(role, 0) + 1
+        self.systems[role] = system
+        self.users[role] = user
+        if role == "sql_agent":
+            code = "SELECT crop_code FROM crop_metrics" if self.calls[role] == 1 else TEMPORAL_SQL
+            return {"code": code, "assumptions": []}, LLMTrace(
+                role=role, content="{}", completion_tokens=10
+            )
+        if role == "python_agent":
+            return {"code": TEMPORAL_PYTHON, "assumptions": []}, LLMTrace(
+                role=role, content="{}", completion_tokens=10
+            )
+        return super().complete_json(role, system, user, max_tokens)
+
+
 @pytest.fixture
 def dataset_path(tmp_path: Path) -> Path:
     path = tmp_path / "fixture.duckdb"
@@ -99,6 +203,32 @@ def settings_for(tmp_path: Path, dataset_path: Path) -> Settings:
         numeric_tolerance=1e-9,
         max_repair_attempts=2,
     )
+
+
+def full_temporal_fixture(tmp_path: Path) -> Path:
+    path = tmp_path / "temporal.duckdb"
+    rows: list[dict[str, Any]] = []
+    for crop_index, (crop_code, crop_name) in enumerate(CROPS.items(), start=1):
+        for year_index, year in enumerate(range(2019, 2025)):
+            production = float(crop_index * 100 + year_index * 10)
+            harvested = float(50 + crop_index)
+            rows.append(
+                {
+                    "municipality_code": "0000001",
+                    "municipality_name": "Fixture",
+                    "state_code": "SP",
+                    "year": year,
+                    "crop_code": crop_code,
+                    "crop_name": crop_name,
+                    "planted_area_ha": harvested,
+                    "harvested_area_ha": harvested,
+                    "production_tonnes": production,
+                    "yield_kg_ha": production * 1000.0 / harvested,
+                    "production_value_thousand_brl": production * 2.0,
+                }
+            )
+    build_database_from_rows(path, rows, mode="temporal-fixture")
+    return path
 
 
 def test_dataset_estimate_is_bounded() -> None:
@@ -229,6 +359,29 @@ def test_robust_dashboard_renderer_applies_structured_visual_theme() -> None:
 
     assert "--bg: #ffffff;" in rendered
     assert "--accent: #2563eb;" in rendered
+
+
+def test_robust_repairs_only_rejected_sql_branch_and_preserves_python(tmp_path: Path) -> None:
+    dataset = full_temporal_fixture(tmp_path)
+    model = GeneratedRepairModel()
+    events: list[tuple[str, str]] = []
+    result = RobustHarness(model, settings_for(tmp_path, dataset)).run(
+        "robust-local-repair",
+        "[TASK:mae-temporal-window-analysis-v3] Run the standard temporal analysis.",
+        lambda node, event_type, *_args: events.append((node, event_type)),
+    )
+
+    assert model.calls["sql_agent"] == 2
+    assert model.calls["python_agent"] == 1
+    assert result["sql_repair_count"] == 1
+    assert result["python_repair_count"] == 0
+    assert result["generated_analysis"]["sql"]["status"] == "completed"
+    assert result["generated_analysis"]["python"]["status"] == "completed"
+    assert len(result["temporal_rows"]) == 42
+    assert ("sql_reviewer", "branch_repair") in events
+    html = (tmp_path / "outputs" / "robust-local-repair" / "dashboard.html").read_text()
+    assert 'id="temporal-analysis"' in html
+    assert "42 reconciled crop-year rows" in html
 
 
 def test_robust_rejects_prompt_override_for_deterministic_role(

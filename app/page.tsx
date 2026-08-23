@@ -3,13 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 
 const defaultPrompt =
-  "Analyze the Brazilian municipal agricultural production database. Identify the most relevant changes in planted area, production, yield, and production value, then present evidence-backed business insights.";
+  "[TASK:mae-temporal-window-analysis-v3] Analyze the Brazilian municipal agricultural production database for 2019–2024 across all seven crops. SQL and Python must independently return exactly one row per crop and year (42 rows) with these columns in this exact order: crop_code, crop_name, year, production_tonnes, weighted_yield_kg_ha, yoy_production_pct, production_rank, trailing_3y_yield_kg_ha, yield_vs_trailing_pct. Define weighted yield as sum(production_tonnes) * 1000 / sum(harvested_area_ha) at crop-year grain. Define year-over-year production as (current / previous - 1) * 100 within each crop, with NULL for 2019 or a zero/null prior value. Rank crops within each year by descending production using dense rank. Define trailing three-year yield as the arithmetic average of annual weighted yields for the current crop-year and at most its two preceding years. Define yield versus trailing as (current weighted yield / trailing yield - 1) * 100. SQL must use staged CTEs with LAG(), DENSE_RANK(), and AVG() OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW). Python must independently reconstruct the same analysis from raw municipal crop_metrics rows without using SQL results or the national_crop_year view. Identify crops whose production rank improved from 2019 to 2024, generate a dashboard, and support the narrative only with reconciled evidence.";
 
 const promptPresets = [
   {
     id: "benchmark",
-    label: "Benchmark Default",
-    description: "Standard PAM 2019-2024 analysis across 7 crops",
+    label: "Temporal Window Default",
+    description: "42 crop-year rows with independent SQL and Python window analysis",
     prompt: defaultPrompt,
   },
   {
@@ -374,7 +374,7 @@ export default function Home() {
     }));
     setConfirmedAgents((prev) => ({
       ...prev,
-      [agentId]: false,
+      [agentId]: true,
     }));
   };
 
@@ -908,8 +908,8 @@ export default function Home() {
             </div>
           </div>
           <p style={{ fontSize: "11.5px", color: "var(--muted)", marginTop: "6px", marginBottom: "12px" }}>
-            Customize the system message for each specialist agent. Typing and clicking <strong>Confirm & Apply</strong> locks
-            your custom prompts in-memory for the next run, injecting them directly into the LLM context.
+            Customize any LLM-backed specialist. Every edit is automatically included in the next run and recorded in
+            the result manifest; deterministic roles remain locked.
           </p>
 
           <div className="agent-config-grid">
