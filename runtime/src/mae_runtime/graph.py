@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import operator
 import sqlite3
@@ -52,6 +53,63 @@ GRAPH_MERMAID = """flowchart TD
     failed_with_evidence --> final_product
 """
 
+CERTIFIED_RELEASE_TASK_ID = "mae-certified-release-v2"
+INFERENCE_BACKED_AGENTS = {
+    "business_agent",
+    "sql_agent",
+    "python_agent",
+    "dashboard_agent",
+    "final_editor",
+}
+
+
+def validate_prompt_overrides(agent_prompts: dict[str, str] | None) -> dict[str, str]:
+    overrides = agent_prompts or {}
+    unsupported = sorted(set(overrides) - INFERENCE_BACKED_AGENTS)
+    if unsupported:
+        raise ValueError(
+            f"Prompt override targets are not inference-backed: {', '.join(unsupported)}"
+        )
+    invalid = sorted(agent_id for agent_id, prompt in overrides.items() if not prompt.strip())
+    if invalid:
+        raise ValueError(f"Prompt overrides cannot be blank: {', '.join(invalid)}")
+    return {agent_id: prompt.strip() for agent_id, prompt in overrides.items()}
+
+
+def prompt_override_manifest(agent_prompts: dict[str, str]) -> list[dict[str, str]]:
+    return [
+        {
+            "agent_id": agent_id,
+            "sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        }
+        for agent_id, prompt in sorted(agent_prompts.items())
+    ]
+
+
+def build_release_certificate(state: RobustState) -> dict[str, Any]:
+    evidence = state.get("approved_evidence", [])
+    keys = [str(item.get("match_key", "")) for item in evidence]
+    agreement_checks = {
+        str(check.get("check_id"))[len("agreement:") :]
+        for check in state.get("validation_checks", [])
+        if str(check.get("check_id", "")).startswith("agreement:") and check.get("passed")
+    }
+    hashes = {
+        str((item.get("provenance") or {}).get("dataset_sha256", ""))
+        for item in evidence
+    }
+    certified = bool(evidence) and len(keys) == len(set(keys)) and set(keys) == agreement_checks
+    certified = certified and len(hashes) == 1 and len(next(iter(hashes), "")) == 64
+    certified = certified and state.get("terminal_status", "completed") == "completed"
+    return {
+        "task_id": CERTIFIED_RELEASE_TASK_ID,
+        "status": "certified" if certified else "rejected",
+        "approved_metrics": len(keys),
+        "agreement_checks": len(agreement_checks),
+        "dataset_sha256": next(iter(hashes), None) if len(hashes) == 1 else None,
+        "numeric_relative_tolerance": 1e-9,
+    }
+
 
 class RobustState(TypedDict, total=False):
     run_id: str
@@ -94,6 +152,7 @@ class RobustHarness:
         emit: Emit,
         agent_prompts: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        agent_prompts = validate_prompt_overrides(agent_prompts)
         if not self.settings.dataset_path.exists():
             raise FileNotFoundError(f"Dataset not found: {self.settings.dataset_path}")
         active_agents = {
@@ -669,6 +728,8 @@ class _GraphRun:
             "skills_used": sorted(
                 {skill for agent in self.agents.values() for skill in agent.get("skills", [])}
             ),
+            "release_certificate": build_release_certificate(final_state),
+            "applied_prompt_overrides": prompt_override_manifest(self.agent_prompts),
         }
 
 

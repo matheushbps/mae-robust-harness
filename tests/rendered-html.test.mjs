@@ -19,9 +19,10 @@ test("server-renders the robust harness console", async () => {
   assert.match(html, /ROBUST HARNESS/);
   assert.match(html, /Municipal crop analysis/);
   assert.match(html, /Make evidence travel/);
-  assert.match(html, /Validated agent graph/);
-  assert.match(html, /Evidence Reconciler/);
+  assert.match(html, /Validated agent graph|State graph/);
+  assert.match(html, /Evidence Reconciler|Results Match Reconciler/);
   assert.match(html, /6 gates/);
+  assert.match(html, /Certified Release Challenge/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 

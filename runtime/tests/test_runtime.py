@@ -22,13 +22,17 @@ from mae_runtime.model_client import QwenClient
 class StubModel:
     model_id = "qwen/qwen3.6-35b-a3b"
 
+    def __init__(self) -> None:
+        self.systems: dict[str, str] = {}
+
     def health(self) -> dict[str, Any]:
         return {"connected": True, "available": True, "model": self.model_id}
 
     def complete_json(
         self, role: str, system: str, user: str, max_tokens: int | None = None
     ) -> tuple[dict[str, Any], LLMTrace]:
-        del system, user, max_tokens
+        del user, max_tokens
+        self.systems[role] = system
         if role in ("business_agent", "business_analyst"):
             payload = {
                 "business_questions": ["What changed?"],
@@ -59,7 +63,8 @@ class StubModel:
         return payload, LLMTrace(role=role, content="{}", completion_tokens=10)
 
     def complete(self, role: str, system: str, user: str, max_tokens: int | None = None) -> LLMTrace:
-        del system, user, max_tokens
+        del user, max_tokens
+        self.systems[role] = system
         return LLMTrace(
             role=role,
             content="Approved evidence [sql:40124:production_tonnes].",
@@ -153,15 +158,22 @@ def test_model_adapter_separates_structured_and_narrative_reasoning(
 def test_robust_langgraph_completes_with_checkpoints(dataset_path: Path, tmp_path: Path) -> None:
     events: list[tuple[str, str]] = []
     settings = settings_for(tmp_path, dataset_path)
-    harness = RobustHarness(StubModel(), settings)
+    model = StubModel()
+    harness = RobustHarness(model, settings)
     result = harness.run(
         "robust-test",
-        "Analyze agricultural changes in the controlled fixture dataset.",
+        "[TASK:mae-certified-release-v2] Analyze agricultural changes in the controlled fixture dataset.",
         lambda node, event_type, _message, _data=None: events.append((node, event_type)),
+        agent_prompts={"sql_agent": "CUSTOM SQL AGENT SYSTEM"},
     )
     assert result["harness"] == "robust"
     assert result["terminal_status"] == "completed"
     assert result["repair_count"] == 0
+    assert result["release_certificate"]["status"] == "certified"
+    assert result["release_certificate"]["approved_metrics"] == 8
+    assert "CUSTOM SQL AGENT SYSTEM" in model.systems["sql_agent"]
+    assert result["applied_prompt_overrides"][0]["agent_id"] == "sql_agent"
+    assert len(result["applied_prompt_overrides"][0]["sha256"]) == 64
     assert len(result["approved_evidence"]) == 8
     assert len(result["inter_agent_messages"]) >= 6
     assert settings.checkpoint_path.exists()
@@ -180,3 +192,16 @@ def test_robust_langgraph_completes_with_checkpoints(dataset_path: Path, tmp_pat
     html_text = html_dashboard.read_text(encoding="utf-8")
     assert "<!DOCTYPE html>" in html_text
     assert 'id="kpis"' in html_text
+
+
+def test_robust_rejects_prompt_override_for_deterministic_role(
+    dataset_path: Path, tmp_path: Path
+) -> None:
+    harness = RobustHarness(StubModel(), settings_for(tmp_path, dataset_path))
+    with pytest.raises(ValueError, match="not inference-backed"):
+        harness.run(
+            "invalid-prompt-role",
+            "Analyze agricultural changes in the controlled fixture dataset.",
+            lambda *_args: None,
+            agent_prompts={"sql_reviewer": "This cannot affect a deterministic reviewer."},
+        )

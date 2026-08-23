@@ -1,0 +1,5 @@
+{
+  "task_id": "mae-certified-release-v2",
+  "title": "Certified Evidence Release Challenge",
+  "prompt": "[TASK:mae-certified-release-v2] Prepare a board-ready certified analysis of the Brazilian municipal agricultural production database for 2019–2024. Cover all seven crops and, for each crop, planted area, production, weighted yield, and production value. Each of the 28 crop-metric results must be independently reproduced through SQL aggregation and Python calculation from municipal rows. Release exactly one canonical evidence item per metric only when both paths agree within 1e-9 relative tolerance and share dataset provenance. If any metric cannot be reconciled, fail the release and identify the unresolved metric instead of publishing conclusions. Generate the required dashboard artifact and an executive narrative using only released evidence."
+}
