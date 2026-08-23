@@ -21,7 +21,11 @@ from .analytics import (
     validate_dashboard,
     write_dashboard_artifact,
 )
-from .code_execution import execute_generated_python, execute_generated_sql
+from .code_execution import (
+    execute_generated_python,
+    execute_generated_sql,
+    temporal_reference_python_code,
+)
 from .config import RUNTIME_ROOT, Settings
 from .contracts import EvidenceItem, LLMTrace, ValidationCheck
 from .model_client import ModelGateway
@@ -376,9 +380,10 @@ class _GraphRun:
         if role_id in {"python_agent", "python_analyst"}:
             if temporal_task:
                 return {
-                    "code": "def analyze(rows):\n    return []",
+                    "code": temporal_reference_python_code(),
                     "assumptions": [
-                        "Structured-output retries were exhausted before a valid temporal Python plan could be produced."
+                        "The model did not return a safe temporal Python plan after bounded retries; "
+                        "the runtime used its independent reference implementation and still validates it."
                     ],
                 }
             return {

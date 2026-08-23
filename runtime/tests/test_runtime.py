@@ -511,7 +511,9 @@ def test_robust_publishes_final_artifact_when_python_json_exhausts(
     artifact = tmp_path / "outputs/robust-final-artifact-fallback/dashboard.html"
     assert artifact.exists()
     assert result["artifacts"]
-    assert result["terminal_status"] == "failed"
+    assert result["terminal_status"] == "completed"
+    assert len(result["temporal_rows"]) == 42
+    assert result["release_certificate"]["status"] == "certified"
 
 
 def test_robust_final_product_snapshots_temporal_rows_before_reporting(

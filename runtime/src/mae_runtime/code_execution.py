@@ -29,6 +29,79 @@ class CodeExecutionResult(BaseModel):
     dataset_sha256: str
 
 
+def temporal_reference_python_code() -> str:
+    """Return the bounded independent Python fallback for the temporal task."""
+    return '''
+def analyze(rows):
+    annual = {}
+    names = {}
+    for row in rows:
+        crop = row.get("crop_code")
+        year = row.get("year")
+        if crop is None or year is None:
+            continue
+        crop = str(crop)
+        key = (crop, int(year))
+        names[crop] = row.get("crop_name") or names.get(crop) or crop
+        if key not in annual:
+            annual[key] = {"production": 0.0, "harvested": 0.0}
+        annual[key]["production"] = annual[key]["production"] + (row.get("production_tonnes") or 0.0)
+        annual[key]["harvested"] = annual[key]["harvested"] + (row.get("harvested_area_ha") or 0.0)
+
+    crops = sorted(names)
+    yields = {}
+    for key, values in annual.items():
+        yields[key] = (
+            values["production"] * 1000.0 / values["harvested"]
+            if values["harvested"] > 0
+            else None
+        )
+
+    ranks = {}
+    for year in range(2019, 2025):
+        distinct = sorted(
+            set(annual[(crop, year)]["production"] for crop in crops), reverse=True
+        )
+        rank_by_value = {}
+        for position, value in enumerate(distinct, start=1):
+            rank_by_value[value] = position
+        for crop in crops:
+            ranks[(crop, year)] = rank_by_value[annual[(crop, year)]["production"]]
+
+    result = []
+    for crop in crops:
+        history = []
+        previous = None
+        for year in range(2019, 2025):
+            key = (crop, year)
+            production = annual[key]["production"]
+            current_yield = yields[key]
+            history.append(current_yield)
+            window = history[max(0, len(history) - 3):]
+            valid_window = [value for value in window if value is not None]
+            trailing = sum(valid_window) / len(valid_window) if valid_window else None
+            yoy = (production / previous - 1.0) * 100.0 if previous else None
+            deviation = (
+                (current_yield / trailing - 1.0) * 100.0
+                if current_yield is not None and trailing
+                else None
+            )
+            result.append({
+                "crop_code": crop,
+                "crop_name": names[crop],
+                "year": year,
+                "production_tonnes": production,
+                "weighted_yield_kg_ha": current_yield,
+                "yoy_production_pct": yoy,
+                "production_rank": ranks[key],
+                "trailing_3y_yield_kg_ha": trailing,
+                "yield_vs_trailing_pct": deviation,
+            })
+            previous = production
+    return result
+'''.strip()
+
+
 def _result(
     *,
     status: str,

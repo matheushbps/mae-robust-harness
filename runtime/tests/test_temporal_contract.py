@@ -49,6 +49,16 @@ def test_first_attempt_ignores_business_rewording() -> None:
     assert first == second
 
 
+def test_temporal_generation_prompt_includes_frozen_request_and_contract() -> None:
+    prompt = temporal_generation_prompt(
+        "python", "[TASK:mae-temporal-window-analysis-v3] Analyze the dataset.", {}
+    )
+
+    assert "[TASK:mae-temporal-window-analysis-v3]" in prompt
+    assert "FROZEN REQUEST:" in prompt
+    assert '"row_count": 42' in prompt
+
+
 def test_rejects_wrong_schema_and_duplicate_grain() -> None:
     rows = valid_rows()
     rows[0]["unexpected"] = 1
