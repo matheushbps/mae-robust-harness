@@ -514,6 +514,38 @@ def test_robust_publishes_final_artifact_when_python_json_exhausts(
     assert result["terminal_status"] == "failed"
 
 
+def test_robust_final_product_snapshots_temporal_rows_before_reporting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = full_temporal_fixture(tmp_path)
+    settings = settings_for(tmp_path, dataset)
+
+    def mutating_temporal_fallback(rows: list[dict[str, Any]]) -> str:
+        snapshot = [dict(row) for row in rows]
+        rows.clear()
+        return "\n".join(
+            [
+                "## Reconciled temporal analysis",
+                "",
+                f"SQL and Python independently reproduced all {len(snapshot)} crop-year rows.",
+            ]
+        )
+
+    monkeypatch.setattr("mae_runtime.graph.render_temporal_fallback", mutating_temporal_fallback)
+
+    result = RobustHarness(GeneratedRepairModel(), settings).run(
+        "robust-temporal-snapshot",
+        "[TASK:mae-temporal-window-analysis-v3] Run the standard temporal analysis.",
+        lambda *_args: None,
+    )
+
+    html = (tmp_path / "outputs/robust-temporal-snapshot/dashboard.html").read_text()
+    assert result["terminal_status"] == "completed"
+    assert len(result["temporal_rows"]) == 42
+    assert "Prompt-Driven Temporal Analysis" in html
+    assert "42 crop-year rows" in html
+
+
 def test_branch_repair_context_guides_nullable_python_aggregation() -> None:
     context = branch_repair_context(
         "python",

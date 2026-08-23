@@ -1053,7 +1053,7 @@ class _GraphRun:
             "Synthesizing provenance-bound executive report into final HTML artifact.",
             {"skills": self._skill_names(node)},
         )
-        evidence = state.get("approved_evidence", [])
+        evidence = [dict(item) for item in state.get("approved_evidence", [])]
         temporal_task = "[TASK:mae-temporal-window-analysis-v3]" in state["prompt"]
         normalized_prompt = str(state["prompt"]).lower()
         visual_note = ""
@@ -1089,6 +1089,8 @@ class _GraphRun:
                     ],
                 }
         briefing = apply_explicit_visual_requirements(briefing, state["prompt"])
+        temporal_rows_report = [dict(row) for row in state.get("temporal_rows", [])]
+        temporal_rows_artifact = [dict(row) for row in temporal_rows_report]
         fallback_message: dict[str, Any] | None = None
         try:
             report, trace = self._text_call(
@@ -1103,20 +1105,20 @@ class _GraphRun:
                 f"REQUEST:\n{state['prompt']}\nSTATUS:\n{state.get('terminal_status', 'completed')}\n"
                 f"FAILURE:\n{state.get('failure_reason', '')}\nAPPROVED EVIDENCE:\n"
                 f"{json.dumps(evidence)}\nRECONCILED TEMPORAL ROWS:\n"
-                f"{json.dumps(state.get('temporal_rows', []))}",
+                f"{json.dumps(temporal_rows_report)}",
                 max_tokens=min(self.settings.max_completion_tokens, 1024),
             )
             if temporal_task:
-                report = render_temporal_fallback(state.get("temporal_rows", []))
+                report = render_temporal_fallback(temporal_rows_report)
                 self.emit(
                     node,
                     "deterministic_temporal_summary",
                     "Replacing unrestricted prose with a summary derived from reconciled rows.",
-                    {"approved_temporal_rows": len(state.get("temporal_rows", []))},
+                    {"approved_temporal_rows": len(temporal_rows_artifact)},
                 )
         except RuntimeError as error:
             report = (
-                render_temporal_fallback(state.get("temporal_rows", []))
+                render_temporal_fallback(temporal_rows_report)
                 if temporal_task
                 else render_certified_fallback(evidence)
             )
@@ -1135,7 +1137,7 @@ class _GraphRun:
                 {
                     "error": str(error),
                     "approved_metrics": len(evidence),
-                    "approved_temporal_rows": len(state.get("temporal_rows", [])),
+                    "approved_temporal_rows": len(temporal_rows_artifact),
                 },
             )
             fallback_message = self.emit_transfer(
@@ -1143,13 +1145,13 @@ class _GraphRun:
                 "ui_console",
                 "The writing model returned no text. Publishing a safe summary built only from "
                 + (
-                    f"{len(state.get('temporal_rows', []))} reconciled temporal rows."
+                    f"{len(temporal_rows_artifact)} reconciled temporal rows."
                     if temporal_task
                     else f"{len(evidence)} approved metrics."
                 ),
                 {
                     "approved_metrics": len(evidence),
-                    "approved_temporal_rows": len(state.get("temporal_rows", [])),
+                    "approved_temporal_rows": len(temporal_rows_artifact),
                 },
                 verdict="SAFE_FALLBACK",
             )
@@ -1166,14 +1168,14 @@ class _GraphRun:
             dashboard_briefing=briefing,
             agent_prompts=self.agent_prompts,
             metadata={"harness": "Robust Harness (Condition B)", "run_id": self.run_id},
-            temporal_rows=state.get("temporal_rows", []),
+            temporal_rows=temporal_rows_artifact,
             generated_analysis={
                 "sql": state.get("sql_execution", {}),
                 "python": state.get("python_execution", {}),
             },
             temporal_label=(
-                f"{len(state.get('temporal_rows', []))} reconciled crop-year rows"
-                if state.get("temporal_rows")
+                f"{len(temporal_rows_artifact)} reconciled crop-year rows"
+                if temporal_rows_artifact
                 else None
             ),
         )
