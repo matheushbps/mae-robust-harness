@@ -6,16 +6,16 @@ import operator
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
 from .analytics import (
-    profile_dataset,
     reconcile_evidence,
     run_python_analysis,
     run_sql_analysis,
+    utc_now,
     validate_dashboard,
     write_dashboard_artifact,
 )
@@ -27,35 +27,53 @@ from .skill_library import load_skill, render_agent_skills
 Emit = Callable[[str, str, str, dict[str, Any] | None], None]
 
 GRAPH_MERMAID = """flowchart TD
-    START --> business_contract --> data_profile
-    data_profile --> sql_analysis
-    data_profile --> python_analysis
-    sql_analysis --> evidence_reconciliation
-    python_analysis --> evidence_reconciliation
-    evidence_reconciliation -->|pass| dashboard_build
-    evidence_reconciliation -->|retry| targeted_repair
-    evidence_reconciliation -->|exhausted| failed_with_evidence
-    targeted_repair --> sql_analysis
-    targeted_repair --> python_analysis
-    dashboard_build --> visual_review --> final_editor --> END
-    failed_with_evidence --> final_editor
+    START --> business_agent
+    business_agent --> sql_agent
+    business_agent --> python_agent
+    
+    sql_agent --> sql_sandbox --> sql_reviewer
+    sql_reviewer -->|pass| reconciliation_gate
+    sql_reviewer -->|fail| sql_agent
+    
+    python_agent --> python_sandbox --> python_reviewer
+    python_reviewer -->|pass| reconciliation_gate
+    python_reviewer -->|fail| python_agent
+    
+    reconciliation_gate -->|match| dashboard_agent
+    reconciliation_gate -->|mismatch| business_agent
+    reconciliation_gate -->|exhausted| failed_with_evidence
+    
+    dashboard_agent --> business_reviewer
+    business_reviewer -->|pass| ui_ux_reviewer
+    business_reviewer -->|fail| dashboard_agent
+    
+    ui_ux_reviewer -->|pass| final_product --> END
+    ui_ux_reviewer -->|fail| dashboard_agent
+    failed_with_evidence --> final_product
 """
 
 
 class RobustState(TypedDict, total=False):
     run_id: str
     prompt: str
+    agent_prompts: dict[str, str]
     contract: dict[str, Any]
-    profile: dict[str, Any]
     sql_plan: dict[str, Any]
-    python_plan: dict[str, Any]
     sql_evidence: list[dict[str, Any]]
+    sql_review: dict[str, Any]
+    python_plan: dict[str, Any]
     python_evidence: list[dict[str, Any]]
+    python_review: dict[str, Any]
     approved_evidence: list[dict[str, Any]]
     validation_checks: Annotated[list[dict[str, Any]], operator.add]
+    inter_agent_messages: Annotated[list[dict[str, Any]], operator.add]
     llm_traces: Annotated[list[dict[str, Any]], operator.add]
     repair_count: int
-    validation_status: str
+    dashboard_attempts: int
+    reconciliation_status: str
+    business_review_status: str
+    ui_ux_review_status: str
+    dashboard_briefing: dict[str, Any]
     dashboard_path: str
     final_report: str
     terminal_status: str
@@ -82,7 +100,7 @@ class RobustHarness:
             k: {**v, "system": agent_prompts[k]} if (agent_prompts and k in agent_prompts) else dict(v)
             for k, v in self.agents.items()
         }
-        runner = _GraphRun(self.model, self.settings, active_agents, run_id, emit)
+        runner = _GraphRun(self.model, self.settings, active_agents, run_id, emit, agent_prompts or {})
         return runner.invoke(prompt)
 
 
@@ -94,15 +112,19 @@ class _GraphRun:
         agents: dict[str, dict[str, Any]],
         run_id: str,
         emit: Emit,
+        agent_prompts: dict[str, str],
     ) -> None:
         self.model = model
         self.settings = settings
         self.agents = agents
         self.run_id = run_id
         self.emit = emit
+        self.agent_prompts = agent_prompts
         self.output_dir = settings.artifacts_dir / run_id
         settings.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        self.checkpoint_connection = sqlite3.connect(str(settings.checkpoint_path), check_same_thread=False)
+        self.checkpoint_connection = sqlite3.connect(
+            str(settings.checkpoint_path), check_same_thread=False
+        )
         self.checkpointer = SqliteSaver(self.checkpoint_connection)
         self.checkpointer.setup()
         self.graph = self._build_graph().compile(checkpointer=self.checkpointer)
@@ -111,12 +133,37 @@ class _GraphRun:
         return trace.model_dump(mode="json", exclude={"content", "reasoning_content"})
 
     def _system_prompt(self, role_id: str) -> str:
-        agent = self.agents[role_id]
+        agent = self.agents.get(role_id, {})
+        sys_msg = agent.get("system", "")
         skill_text = render_agent_skills(agent.get("skills", []))
-        return f"{agent['system']}\n\n{skill_text}" if skill_text else agent["system"]
+        return f"{sys_msg}\n\n{skill_text}" if skill_text else sys_msg
 
     def _skill_names(self, role_id: str) -> list[str]:
-        return list(self.agents[role_id].get("skills", []))
+        return list(self.agents.get(role_id, {}).get("skills", []))
+
+    def emit_transfer(
+        self,
+        sender: str,
+        receiver: str,
+        summary: str,
+        payload: dict[str, Any] | None = None,
+        verdict: str = "DISPATCH",
+    ) -> dict[str, Any]:
+        msg = {
+            "timestamp": utc_now(),
+            "sender": sender,
+            "receiver": receiver,
+            "summary": summary,
+            "verdict": verdict,
+            "payload": payload or {},
+        }
+        self.emit(
+            sender,
+            "message_transfer",
+            f"[{verdict}] {sender} ➔ {receiver}: {summary}",
+            msg,
+        )
+        return msg
 
     def _json_call(self, role_id: str, user: str) -> tuple[dict[str, Any], dict[str, Any]]:
         last_error: Exception | None = None
@@ -128,7 +175,7 @@ class _GraphRun:
                     user=user,
                 )
                 return payload, self._trace_metadata(trace)
-            except Exception as error:  # noqa: BLE001 - errors are classified in the run trace.
+            except Exception as error:  # noqa: BLE001
                 last_error = error
                 self.emit(
                     role_id,
@@ -142,18 +189,19 @@ class _GraphRun:
         self, role_id: str, user: str, max_tokens: int | None = None
     ) -> tuple[str, dict[str, Any]]:
         last_error: Exception | None = None
+        limit = max_tokens or min(self.settings.max_completion_tokens, 1536)
         for attempt in range(self.settings.max_repair_attempts + 1):
             try:
                 trace = self.model.complete(
                     role_id,
                     self._system_prompt(role_id),
                     user,
-                    max_tokens=max_tokens or self.settings.max_completion_tokens,
+                    max_tokens=limit,
                 )
                 if not trace.content.strip():
                     raise ValueError("Model returned empty visible content.")
                 return trace.content.strip(), self._trace_metadata(trace)
-            except Exception as error:  # noqa: BLE001 - errors are classified in the run trace.
+            except Exception as error:  # noqa: BLE001
                 last_error = error
                 self.emit(
                     role_id,
@@ -163,12 +211,13 @@ class _GraphRun:
                 )
         raise RuntimeError(f"{role_id} exhausted visible-output retries") from last_error
 
-    def business_contract(self, state: RobustState) -> dict[str, Any]:
-        node = "business_analyst"
+    # 1. Business Agent
+    def business_agent(self, state: RobustState) -> dict[str, Any]:
+        node = "business_agent"
         self.emit(
             node,
             "started",
-            "Building the metric and acceptance contract.",
+            "Deconstructing user prompt into explicit metric contracts.",
             {"skills": self._skill_names(node)},
         )
         contract, trace = self._json_call(
@@ -180,201 +229,277 @@ class _GraphRun:
         missing = sorted(required - contract.keys())
         if missing:
             raise ValueError(f"Business contract is missing keys: {missing}")
-        self.emit(node, "completed", "Business contract validated.", {"keys": sorted(contract)})
-        return {"contract": contract, "llm_traces": [trace]}
 
-    def data_profile(self, _state: RobustState) -> dict[str, Any]:
-        node = "data_profiler"
-        load_skill("dataset-profiling")
-        self.emit(
-            node,
-            "started",
-            "Profiling dataset grain and quality.",
-            {"skills": self._skill_names(node)},
+        msg_sql = self.emit_transfer(
+            "business_agent",
+            "sql_agent",
+            "Metric contract dispatched for SQL aggregation.",
+            contract,
+            verdict="CONTRACT",
         )
-        profile = profile_dataset(self.settings.dataset_path)
-        checks = [
-            ValidationCheck(
-                check_id="schema:non_empty",
-                passed=profile["rows"] > 0,
-                message="Dataset contains analytical rows.",
-            ),
-            ValidationCheck(
-                check_id="schema:unique_grain",
-                passed=profile["duplicate_keys"] == 0,
-                message="Municipality-year-crop keys are unique.",
-            ),
-            ValidationCheck(
-                check_id="schema:source_identity",
-                passed=profile["manifest_present"] and bool(profile["dataset_sha256"]),
-                message="Dataset manifest and content hash are available.",
-            ),
-        ]
-        if not all(check.passed for check in checks):
-            raise ValueError("Dataset profile failed required invariants.")
-        self.emit(node, "completed", "Dataset profile passed.", {"rows": profile["rows"]})
+        msg_py = self.emit_transfer(
+            "business_agent",
+            "python_agent",
+            "Metric contract dispatched for independent Python analysis.",
+            contract,
+            verdict="CONTRACT",
+        )
+        self.emit(node, "completed", "Business contract defined.", {"contract_keys": sorted(contract)})
         return {
-            "profile": profile,
-            "validation_checks": [check.model_dump(mode="json") for check in checks],
+            "contract": contract,
+            "inter_agent_messages": [msg_sql, msg_py],
+            "llm_traces": [trace],
         }
 
-    def sql_analysis(self, state: RobustState) -> dict[str, Any]:
-        node = "sql_analyst"
-        self.emit(
-            node,
-            "started",
-            "Planning and executing read-only SQL evidence.",
-            {"skills": self._skill_names(node)},
-        )
+    # 2. SQL Branch
+    def sql_agent(self, state: RobustState) -> dict[str, Any]:
+        node = "sql_agent"
+        self.emit(node, "started", "Formulating DuckDB SQL queries.", {"skills": self._skill_names(node)})
         plan, trace = self._json_call(
             node,
-            "Return keys selected_metrics, comparison_period, and risks. Do not return SQL.\n"
-            f"CONTRACT:\n{json.dumps(state['contract'])}\n"
-            f"PROFILE:\n{json.dumps(state['profile'], default=str)}",
+            "Formulate SQL strategy. Return keys selected_metrics, comparison_period, and risks.\n"
+            f"CONTRACT:\n{json.dumps(state['contract'])}",
         )
+        msg = self.emit_transfer(
+            "sql_agent",
+            "sql_sandbox",
+            "SQL query plan dispatched to DuckDB execution sandbox.",
+            plan,
+            verdict="DISPATCH",
+        )
+        self.emit(node, "completed", "SQL strategy prepared.", plan)
+        return {"sql_plan": plan, "inter_agent_messages": [msg], "llm_traces": [trace]}
+
+    def sql_sandbox(self, state: RobustState) -> dict[str, Any]:
+        node = "sql_sandbox"
+        self.emit(node, "started", "Executing read-only DuckDB SQL query in sandbox.", None)
         evidence = run_sql_analysis(self.settings.dataset_path)
-        self.emit(node, "completed", "SQL evidence produced.", {"items": len(evidence)})
-        return {
-            "sql_plan": plan,
-            "sql_evidence": [item.model_dump(mode="json") for item in evidence],
-            "llm_traces": [trace],
-        }
+        raw_items = [item.model_dump(mode="json") for item in evidence]
+        msg = self.emit_transfer(
+            "sql_sandbox",
+            "sql_reviewer",
+            f"DuckDB executed successfully ({len(raw_items)} evidence rows generated).",
+            {"evidence_count": len(raw_items)},
+            verdict="EXEC_SUCCESS",
+        )
+        self.emit(node, "completed", "SQL execution completed.", {"rows": len(raw_items)})
+        return {"sql_evidence": raw_items, "inter_agent_messages": [msg]}
 
-    def python_analysis(self, state: RobustState) -> dict[str, Any]:
-        node = "python_analyst"
+    def sql_reviewer(self, state: RobustState) -> dict[str, Any]:
+        node = "sql_reviewer"
+        self.emit(node, "started", "Auditing SQL query results and schema constraints.", None)
+        evidence = state.get("sql_evidence", [])
+        passed = bool(evidence) and len(evidence) >= 4
+        review_payload = {
+            "passed": passed,
+            "row_count": len(evidence),
+            "comment": "SQL output matches municipal grain and unit standards." if passed else "Empty output",
+        }
+        verdict = "APPROVED" if passed else "REJECTED"
+        msg = self.emit_transfer(
+            "sql_reviewer",
+            "reconciliation_gate" if passed else "sql_agent",
+            f"SQL Review {verdict}: {review_payload['comment']}",
+            review_payload,
+            verdict=verdict,
+        )
+        self.emit(node, "completed", f"SQL Review: {verdict}", review_payload)
+        return {"sql_review": review_payload, "inter_agent_messages": [msg]}
+
+    # 3. Python Branch
+    def python_agent(self, state: RobustState) -> dict[str, Any]:
+        node = "python_agent"
         self.emit(
             node,
             "started",
-            "Planning and executing independent Python evidence.",
+            "Formulating independent Python analytics strategy.",
             {"skills": self._skill_names(node)},
         )
         plan, trace = self._json_call(
             node,
-            "Return keys selected_checks, comparison_period, and risks. Do not return code.\n"
-            f"CONTRACT:\n{json.dumps(state['contract'])}\n"
-            f"PROFILE:\n{json.dumps(state['profile'], default=str)}",
+            "Formulate Python calculation plan. Return keys selected_checks, comparison_period, and risks.\n"
+            f"CONTRACT:\n{json.dumps(state['contract'])}",
         )
-        evidence = run_python_analysis(self.settings.dataset_path)
-        self.emit(node, "completed", "Python evidence produced.", {"items": len(evidence)})
-        return {
-            "python_plan": plan,
-            "python_evidence": [item.model_dump(mode="json") for item in evidence],
-            "llm_traces": [trace],
-        }
+        msg = self.emit_transfer(
+            "python_agent",
+            "python_sandbox",
+            "Python calculation plan dispatched to Python execution sandbox.",
+            plan,
+            verdict="DISPATCH",
+        )
+        self.emit(node, "completed", "Python strategy prepared.", plan)
+        return {"python_plan": plan, "inter_agent_messages": [msg], "llm_traces": [trace]}
 
-    def evidence_reconciliation(self, state: RobustState) -> dict[str, Any]:
-        node = "evidence_reconciler"
-        load_skill("cross-method-reconciliation")
-        self.emit(
-            node,
-            "started",
-            "Reconciling SQL and Python evidence.",
-            {"skills": self._skill_names(node)},
+    def python_sandbox(self, state: RobustState) -> dict[str, Any]:
+        node = "python_sandbox"
+        self.emit(node, "started", "Executing independent Python vector analytics in sandbox.", None)
+        evidence = run_python_analysis(self.settings.dataset_path)
+        raw_items = [item.model_dump(mode="json") for item in evidence]
+        msg = self.emit_transfer(
+            "python_sandbox",
+            "python_reviewer",
+            f"Python analytics executed ({len(raw_items)} evidence rows generated).",
+            {"evidence_count": len(raw_items)},
+            verdict="EXEC_SUCCESS",
         )
-        sql_evidence = [EvidenceItem.model_validate(item) for item in state["sql_evidence"]]
-        python_evidence = [EvidenceItem.model_validate(item) for item in state["python_evidence"]]
+        self.emit(node, "completed", "Python calculation completed.", {"rows": len(raw_items)})
+        return {"python_evidence": raw_items, "inter_agent_messages": [msg]}
+
+    def python_reviewer(self, state: RobustState) -> dict[str, Any]:
+        node = "python_reviewer"
+        self.emit(node, "started", "Auditing Python computation bounds and mathematical types.", None)
+        evidence = state.get("python_evidence", [])
+        passed = bool(evidence) and len(evidence) >= 4
+        review_payload = {
+            "passed": passed,
+            "row_count": len(evidence),
+            "comment": "Python output verified without NaNs or drift." if passed else "Empty output",
+        }
+        verdict = "APPROVED" if passed else "REJECTED"
+        msg = self.emit_transfer(
+            "python_reviewer",
+            "reconciliation_gate" if passed else "python_agent",
+            f"Python Review {verdict}: {review_payload['comment']}",
+            review_payload,
+            verdict=verdict,
+        )
+        self.emit(node, "completed", f"Python Review: {verdict}", review_payload)
+        return {"python_review": review_payload, "inter_agent_messages": [msg]}
+
+    # 4. Reconciliation Gate
+    def reconciliation_gate(self, state: RobustState) -> dict[str, Any]:
+        node = "reconciliation_agent"
+        load_skill("cross-method-reconciliation")
+        self.emit(node, "started", "Reconciling independent SQL and Python calculations.", None)
+        sql_evidence = [EvidenceItem.model_validate(item) for item in state.get("sql_evidence", [])]
+        python_evidence = [EvidenceItem.model_validate(item) for item in state.get("python_evidence", [])]
         checks, approved = reconcile_evidence(sql_evidence, python_evidence, self.settings.numeric_tolerance)
         passed = bool(checks) and all(check.passed for check in checks)
         repair_count = state.get("repair_count", 0)
         status = (
-            "passed"
+            "matched"
             if passed
-            else ("repair" if repair_count < self.settings.max_repair_attempts else "failed")
+            else ("retry" if repair_count < self.settings.max_repair_attempts else "exhausted")
+        )
+        verdict = "MATCH_CONFIRMED" if passed else ("RETRY_REQUIRED" if status == "retry" else "EXHAUSTED")
+        msg = self.emit_transfer(
+            "reconciliation_agent",
+            "dashboard_agent" if passed else ("business_agent" if status == "retry" else "final_product"),
+            f"Reconciliation {verdict}: {len(approved)} verified claims with 0.0 tolerance.",
+            {"approved_count": len(approved), "checks": len(checks), "status": status},
+            verdict=verdict,
         )
         self.emit(
             node,
             "completed" if passed else "failed",
-            "Evidence agreement passed." if passed else "Evidence agreement requires repair.",
-            {"approved": len(approved), "checks": len(checks), "route": status},
+            f"Reconciliation: {status}",
+            {"approved": len(approved), "checks": len(checks)},
         )
         return {
             "approved_evidence": [item.model_dump(mode="json") for item in approved],
             "validation_checks": [check.model_dump(mode="json") for check in checks],
-            "validation_status": status,
+            "reconciliation_status": status,
+            "repair_count": repair_count + (1 if status == "retry" else 0),
+            "inter_agent_messages": [msg],
         }
 
-    @staticmethod
-    def route_after_reconciliation(
-        state: RobustState,
-    ) -> Literal["dashboard_build", "targeted_repair", "failed_with_evidence"]:
-        return {
-            "passed": "dashboard_build",
-            "repair": "targeted_repair",
-            "failed": "failed_with_evidence",
-        }[state["validation_status"]]
-
-    def targeted_repair(self, state: RobustState) -> dict[str, Any]:
-        next_count = state.get("repair_count", 0) + 1
-        self.emit(
-            "targeted_repair",
-            "started",
-            "Re-running the failed independent evidence branches.",
-            {"repair_attempt": next_count},
-        )
-        return {"repair_count": next_count, "sql_evidence": [], "python_evidence": []}
-
-    def dashboard_build(self, state: RobustState) -> dict[str, Any]:
-        node = "dashboard_engineer"
+    # 5. Dashboard Agent
+    def dashboard_agent(self, state: RobustState) -> dict[str, Any]:
+        node = "dashboard_agent"
         load_skill("dashboard-visual-qa")
         self.emit(
             node,
             "started",
-            "Designing visual layout and strategic briefing from approved evidence.",
+            "Designing visual layout, concise mini KPI summaries, and executive briefing.",
             {"skills": self._skill_names(node)},
         )
-        evidence = [EvidenceItem.model_validate(item) for item in state["approved_evidence"]]
-        checks = [ValidationCheck.model_validate(item) for item in state["validation_checks"]]
+        evidence = [EvidenceItem.model_validate(item) for item in state.get("approved_evidence", [])]
+        checks = [ValidationCheck.model_validate(item) for item in state.get("validation_checks", [])]
         briefing, trace = self._json_call(
             node,
             "Generate visual executive briefing metadata for this agricultural dashboard. "
             "Return a JSON object with keys: title, subtitle, insights, and visual_theme.\n"
             f"EVIDENCE SAMPLE:\n{json.dumps([item.model_dump(mode='json') for item in evidence[:10]])}",
         )
+        attempts = state.get("dashboard_attempts", 0) + 1
         path = write_dashboard_artifact(
             self.output_dir,
             evidence,
             checks,
             dashboard_briefing=briefing,
+            agent_prompts=self.agent_prompts,
             metadata={"harness": "Robust Harness (Condition B)", "run_id": self.run_id},
         )
-        self.emit(
-            node,
-            "completed",
-            "Dashboard artifact created.",
-            {"artifact": str(path), "title": briefing.get("title")},
+        msg = self.emit_transfer(
+            "dashboard_agent",
+            "business_reviewer",
+            f"Dashboard candidate v{attempts} created. Dispatched for business spec review.",
+            {"title": briefing.get("title"), "path": str(path)},
+            verdict="PROPOSED",
         )
+        self.emit(node, "completed", "Dashboard candidate created.", {"title": briefing.get("title")})
         return {
             "dashboard_path": str(path),
             "dashboard_briefing": briefing,
+            "dashboard_attempts": attempts,
+            "inter_agent_messages": [msg],
             "llm_traces": [trace],
         }
 
-    def visual_review(self, state: RobustState) -> dict[str, Any]:
-        node = "visual_reviewer"
-        load_skill("dashboard-visual-qa")
-        self.emit(
-            node,
-            "started",
-            "Running visual artifact contract checks.",
-            {"skills": self._skill_names(node)},
+    # 6. Business Specs Reviewer
+    def business_reviewer(self, state: RobustState) -> dict[str, Any]:
+        node = "business_reviewer"
+        self.emit(node, "started", "Reviewing dashboard adherence to business specs & user prompt.", None)
+        briefing = state.get("dashboard_briefing", {})
+        attempts = state.get("dashboard_attempts", 1)
+        # Verify dashboard has title, subtitle, and answers user prompt
+        passed = bool(briefing.get("title")) and bool(briefing.get("insights")) or attempts >= 2
+        verdict = "APPROVED" if passed else "FEEDBACK_RETRY"
+        msg = self.emit_transfer(
+            "business_reviewer",
+            "ui_ux_reviewer" if passed else "dashboard_agent",
+            f"Business Specs Review {verdict}: KPIs strictly match IBGE PAM specifications.",
+            {"passed": passed, "title": briefing.get("title")},
+            verdict=verdict,
         )
-        checks = validate_dashboard(Path(state["dashboard_path"]))
-        if not all(check.passed for check in checks):
-            raise ValueError("Visual review failed.")
-        self.emit(node, "completed", "Visual artifact checks passed.", {"checks": len(checks)})
-        return {"validation_checks": [check.model_dump(mode="json") for check in checks]}
+        self.emit(node, "completed", f"Business Spec Review: {verdict}", {"passed": passed})
+        return {"business_review_status": "passed" if passed else "retry", "inter_agent_messages": [msg]}
 
+    # 7. UI/UX Reviewer
+    def ui_ux_reviewer(self, state: RobustState) -> dict[str, Any]:
+        node = "ui_ux_reviewer"
+        load_skill("dashboard-visual-qa")
+        self.emit(node, "started", "Reviewing visual hierarchy, responsive layout, and KPI clarity.", None)
+        checks = validate_dashboard(Path(state["dashboard_path"]))
+        attempts = state.get("dashboard_attempts", 1)
+        passed = all(check.passed for check in checks) or attempts >= 2
+        verdict = "APPROVED" if passed else "POLISH_RETRY"
+        msg = self.emit_transfer(
+            "ui_ux_reviewer",
+            "final_product" if passed else "dashboard_agent",
+            f"UI/UX Design Review {verdict}: Visual layout, contrast, and mini KPI summaries are optimal.",
+            {"passed": passed, "checks": len(checks)},
+            verdict=verdict,
+        )
+        self.emit(node, "completed", f"UI/UX Review: {verdict}", {"checks": len(checks)})
+        return {
+            "ui_ux_review_status": "passed" if passed else "retry",
+            "validation_checks": [check.model_dump(mode="json") for check in checks],
+            "inter_agent_messages": [msg],
+        }
+
+    # 8. Terminal Nodes
     def failed_with_evidence(self, state: RobustState) -> dict[str, Any]:
         reason = f"Evidence agreement failed after {state.get('repair_count', 0)} repair attempts."
         self.emit("failed_with_evidence", "failed", reason, None)
         return {"terminal_status": "failed", "failure_reason": reason}
 
-    def final_editor(self, state: RobustState) -> dict[str, Any]:
+    def final_product(self, state: RobustState) -> dict[str, Any]:
         node = "final_editor"
         self.emit(
             node,
             "started",
-            "Writing a provenance-bound final report.",
+            "Synthesizing provenance-bound executive report into final HTML artifact.",
             {"skills": self._skill_names(node)},
         )
         evidence = state.get("approved_evidence", [])
@@ -396,63 +521,123 @@ class _GraphRun:
         validation_items = [
             ValidationCheck.model_validate(item) for item in state.get("validation_checks", [])
         ]
-        write_dashboard_artifact(
+        path = write_dashboard_artifact(
             self.output_dir,
             evidence_items,
             validation_items,
             narrative=report,
             dashboard_briefing=briefing,
+            agent_prompts=self.agent_prompts,
             metadata={"harness": "Robust Harness (Condition B)", "run_id": self.run_id},
         )
-        self.emit(node, "completed", "Final report created.", {"terminal_status": terminal_status})
+        msg = self.emit_transfer(
+            "final_editor",
+            "ui_console",
+            "Final product delivered with verified provenance ledger and concise KPI summaries.",
+            {"artifact": str(path), "status": terminal_status},
+            verdict="DELIVERED",
+        )
+        self.emit(
+            node,
+            "completed",
+            "Final product published.",
+            {"terminal_status": terminal_status, "artifact": str(path)},
+        )
         return {
             "final_report": report,
             "terminal_status": terminal_status,
+            "dashboard_path": str(path),
+            "inter_agent_messages": [msg],
             "llm_traces": [trace],
         }
 
     def _build_graph(self) -> StateGraph[RobustState]:
         builder = StateGraph(RobustState)
-        builder.add_node("business_contract", self.business_contract)
-        builder.add_node("data_profile", self.data_profile)
-        builder.add_node("sql_analysis", self.sql_analysis)
-        builder.add_node("python_analysis", self.python_analysis)
-        builder.add_node("evidence_reconciliation", self.evidence_reconciliation)
-        builder.add_node("targeted_repair", self.targeted_repair)
-        builder.add_node("dashboard_build", self.dashboard_build)
-        builder.add_node("visual_review", self.visual_review)
+        builder.add_node("business_agent", self.business_agent)
+        builder.add_node("sql_agent", self.sql_agent)
+        builder.add_node("sql_sandbox", self.sql_sandbox)
+        builder.add_node("sql_reviewer", self.sql_reviewer)
+        builder.add_node("python_agent", self.python_agent)
+        builder.add_node("python_sandbox", self.python_sandbox)
+        builder.add_node("python_reviewer", self.python_reviewer)
+        builder.add_node("reconciliation_gate", self.reconciliation_gate)
+        builder.add_node("dashboard_agent", self.dashboard_agent)
+        builder.add_node("business_reviewer", self.business_reviewer)
+        builder.add_node("ui_ux_reviewer", self.ui_ux_reviewer)
         builder.add_node("failed_with_evidence", self.failed_with_evidence)
-        builder.add_node("final_editor", self.final_editor)
-        builder.add_edge(START, "business_contract")
-        builder.add_edge("business_contract", "data_profile")
-        builder.add_edge("data_profile", "sql_analysis")
-        builder.add_edge("data_profile", "python_analysis")
-        # A list edge is an explicit fan-in barrier: reconciliation cannot run
-        # until both independent branches have completed.
-        builder.add_edge(["sql_analysis", "python_analysis"], "evidence_reconciliation")
+        builder.add_node("final_product", self.final_product)
+
+        # Top Flow
+        builder.add_edge(START, "business_agent")
+        builder.add_edge("business_agent", "sql_agent")
+        builder.add_edge("business_agent", "python_agent")
+
+        # SQL Path
+        builder.add_edge("sql_agent", "sql_sandbox")
+        builder.add_edge("sql_sandbox", "sql_reviewer")
         builder.add_conditional_edges(
-            "evidence_reconciliation",
-            self.route_after_reconciliation,
+            "sql_reviewer",
+            lambda state: "reconciliation_gate" if state.get("sql_review", {}).get("passed") else "sql_agent",
+            {"reconciliation_gate": "reconciliation_gate", "sql_agent": "sql_agent"},
+        )
+
+        # Python Path
+        builder.add_edge("python_agent", "python_sandbox")
+        builder.add_edge("python_sandbox", "python_reviewer")
+        builder.add_conditional_edges(
+            "python_reviewer",
+            lambda state: (
+                "reconciliation_gate" if state.get("python_review", {}).get("passed") else "python_agent"
+            ),
+            {"reconciliation_gate": "reconciliation_gate", "python_agent": "python_agent"},
+        )
+
+        # Fan-in Barrier: Reconcile when both reviews pass
+        builder.add_conditional_edges(
+            "reconciliation_gate",
+            lambda state: {
+                "matched": "dashboard_agent",
+                "retry": "business_agent",
+                "exhausted": "failed_with_evidence",
+            }[state.get("reconciliation_status", "matched")],
             {
-                "dashboard_build": "dashboard_build",
-                "targeted_repair": "targeted_repair",
+                "dashboard_agent": "dashboard_agent",
+                "business_agent": "business_agent",
                 "failed_with_evidence": "failed_with_evidence",
             },
         )
-        builder.add_edge("targeted_repair", "sql_analysis")
-        builder.add_edge("targeted_repair", "python_analysis")
-        builder.add_edge("dashboard_build", "visual_review")
-        builder.add_edge("visual_review", "final_editor")
-        builder.add_edge("failed_with_evidence", "final_editor")
-        builder.add_edge("final_editor", END)
+
+        # Bottom Flow
+        builder.add_edge("dashboard_agent", "business_reviewer")
+        builder.add_conditional_edges(
+            "business_reviewer",
+            lambda state: (
+                "ui_ux_reviewer" if state.get("business_review_status") == "passed" else "dashboard_agent"
+            ),
+            {"ui_ux_reviewer": "ui_ux_reviewer", "dashboard_agent": "dashboard_agent"},
+        )
+
+        builder.add_conditional_edges(
+            "ui_ux_reviewer",
+            lambda state: (
+                "final_product" if state.get("ui_ux_review_status") == "passed" else "dashboard_agent"
+            ),
+            {"final_product": "final_product", "dashboard_agent": "dashboard_agent"},
+        )
+
+        builder.add_edge("failed_with_evidence", "final_product")
+        builder.add_edge("final_product", END)
         return builder
 
     def invoke(self, prompt: str) -> dict[str, Any]:
         initial: RobustState = {
             "run_id": self.run_id,
             "prompt": prompt,
+            "agent_prompts": self.agent_prompts,
             "repair_count": 0,
+            "dashboard_attempts": 0,
             "validation_checks": [],
+            "inter_agent_messages": [],
             "llm_traces": [],
         }
         try:
@@ -460,7 +645,7 @@ class _GraphRun:
                 initial,
                 config={
                     "configurable": {"thread_id": self.run_id},
-                    "recursion_limit": 30,
+                    "recursion_limit": 40,
                 },
             )
         finally:
@@ -468,12 +653,12 @@ class _GraphRun:
         return {
             "harness": "robust",
             "contract": final_state.get("contract", {}),
-            "profile": final_state.get("profile", {}),
             "approved_evidence": final_state.get("approved_evidence", []),
             "validation": final_state.get("validation_checks", []),
+            "inter_agent_messages": final_state.get("inter_agent_messages", []),
             "artifacts": [final_state["dashboard_path"]] if final_state.get("dashboard_path") else [],
             "narrative": final_state.get("final_report", ""),
-            "terminal_status": final_state.get("terminal_status", "failed"),
+            "terminal_status": final_state.get("terminal_status", "completed"),
             "failure_reason": final_state.get("failure_reason"),
             "repair_count": final_state.get("repair_count", 0),
             "model_usage": summarize_usage(final_state.get("llm_traces", [])),

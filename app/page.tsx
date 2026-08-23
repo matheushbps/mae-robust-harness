@@ -37,72 +37,88 @@ const promptPresets = [
 
 const defaultAgents = [
   {
-    id: "business_analyst",
+    id: "business_agent",
     index: "01",
-    role: "Business Analyst",
+    role: "Business Agent",
     system:
-      "You are an elite Agribusiness Strategy Director and Senior Data Architect. Your mission is to deconstruct complex agricultural research prompts into precise, mathematically sound business questions, target KPI dimensions (planted area, production volume, average yield, gross production value), and explicit quantitative acceptance criteria across Brazilian municipal commodities. Define strict evaluation boundaries, identify temporal shifts (2019-2024), and ensure every analytical question directly drives executive decision-making without fabricating unproven premises.",
+      "You are the Lead Business Strategy Agent. Your mission is to deconstruct research requests into explicit agricultural questions, target metric contracts (planted area, volume, yield, value), and quantitative criteria across Brazilian municipal commodities from 2019 to 2024.",
     tools: ["dataset_catalog", "schema_reader"],
   },
   {
-    id: "data_profiler",
+    id: "sql_agent",
     index: "02",
-    role: "Data Profiler",
+    role: "SQL Specialist Agent",
     system:
-      "You are a Principal Data Quality Engineer and Agricultural Econometrician specializing in large-scale municipal registries and panel datasets. Your responsibility is to perform rigorous deterministic profiling of the IBGE PAM database (233,940 records). You audit municipal-year-crop grain uniqueness, compute missingness vectors, evaluate numerical value distributions, verify SHA-256 cryptographic provenance, and establish strict schema invariants before downstream computation.",
-    tools: ["readonly_duckdb_metadata", "dataset_profiler"],
-  },
-  {
-    id: "sql_analyst",
-    index: "03",
-    role: "SQL Analyst",
-    system:
-      "You are a Senior High-Performance Database Analytics Engineer specialized in DuckDB vector queries and columnar OLAP processing. Your objective is to formulate auditable, read-only SQL aggregations that extract ground-truth municipal metrics across Brazilian agricultural commodities. You attach query text, temporal bounds (2019-2024), and standard SI units (hectares, metric tonnes, kg/ha, thousand BRL) to every evidence item, guaranteeing immutable query provenance for downstream auditability.",
+      "You are a Senior SQL Analytics Specialist. Your objective is to formulate high-performance DuckDB SQL aggregation queries across municipal commodities, attaching provenance metadata and standard SI units to every evidence item.",
     tools: ["readonly_sql"],
   },
   {
-    id: "python_analyst",
-    index: "04",
-    role: "Python Analyst",
+    id: "sql_reviewer",
+    index: "03",
+    role: "SQL Reviewer",
     system:
-      "You are a Senior Quantitative Data Scientist and Econometrician specializing in computational agriculture and time-series yield decomposition. Your mission is to independently calculate baseline totals, compound annual growth rates (CAGR), percentage changes, and technological yield efficiency in an isolated Python memory sandbox without reusing SQL intermediate tables. You provide an independent mathematical check to ensure analytical redundancy.",
+      "You are a Strict SQL Quality Auditor. Your role is to inspect executed SQL queries and data outputs. Verify query syntax, grain uniqueness, boundary validity, and confirm if results are mathematically sound and ready for reconciliation.",
+    tools: ["sql_verifier"],
+  },
+  {
+    id: "python_agent",
+    index: "04",
+    role: "Python / Pandas Agent",
+    system:
+      "You are a Senior Quantitative Python Data Scientist. Your mission is to formulate independent vector calculations, percentage changes, and yield trends in Python without reusing SQL intermediate tables.",
     tools: ["python_analytics"],
   },
   {
-    id: "evidence_reconciler",
+    id: "python_reviewer",
     index: "05",
-    role: "Evidence Reconciler",
+    role: "Python Reviewer",
     system:
-      "You are a Principal Integrity Auditor and Mathematical Reconciler for enterprise AI analytics. Your mandate is to rigorously cross-compare independently produced SQL and Python evidence records against strict numeric tolerances (< 1e-9). You detect numerical drift, flag discrepancies, reject unverified claims, and approve only mathematically proven facts into the canonical evidence ledger with cryptographic SHA-256 signatures.",
+      "You are a Senior Python Code & Quality Auditor. Your role is to inspect executed Python analytics. Verify computation correctness, absence of NaN/infinite values, and ensure statistical metrics are ready for reconciliation.",
+    tools: ["python_verifier"],
+  },
+  {
+    id: "reconciliation_agent",
+    index: "06",
+    role: "Results Match Reconciler",
+    system:
+      "You are a Principal Integrity Auditor. Your mandate is to rigorously cross-compare independently produced SQL and Python outputs against strict numerical tolerances (< 1e-9). You approve only mathematically verified facts into the evidence ledger.",
     tools: ["evidence_store", "numeric_validator"],
   },
   {
-    id: "dashboard_engineer",
-    index: "06",
-    role: "Dashboard Engineer",
+    id: "dashboard_agent",
+    index: "07",
+    role: "Dashboard Agent",
     system:
-      "You are an elite Full-Stack Data Visualization Specialist and Frontend Dashboard Architect. Your goal is to create appealing, high-impact, and beautifully crafted executive dashboards in Python and HTML. You synthesize complex agricultural datasets into intuitive KPI summary cards, interactive trend charts, dynamic crop filters, and an auditable provenance ledger. You ensure visual excellence, responsive dark-mode aesthetics, precise unit formatting (ha, t, kg/ha, R$), and seamless executive usability.",
+      "You are an elite Full-Stack Dashboard Creator in Python & HTML. Your goal is to create appealing, concise, and beautifully crafted executive dashboards. You synthesize complex metrics into high-impact mini KPI summaries, interactive charts, and strategic highlights.",
     tools: ["approved_evidence_reader", "artifact_writer"],
   },
   {
-    id: "visual_reviewer",
-    index: "07",
-    role: "Visual Reviewer",
+    id: "business_reviewer",
+    index: "08",
+    role: "Business Specs Reviewer",
     system:
-      "You are a Senior Visual Quality Assurance Engineer and Dashboard Compliance Auditor. Your role is to systematically inspect generated dashboard artifacts, DOM structures, and analytical charts. You verify that all required DOM containers (#kpis, #charts, #evidence-ledger, #narrative) are present, validate chart rendering integrity, check color contrast and typography, and ensure that every visual component faithfully reflects verified empirical data.",
+      "You are a Senior Business Specification Reviewer. Your role is to evaluate whether the proposed dashboard artifact strictly answers all original business questions, covers all requested commodities, and adheres to the business contract specifications.",
+    tools: ["contract_auditor"],
+  },
+  {
+    id: "ui_ux_reviewer",
+    index: "09",
+    role: "UI / UX Agent",
+    system:
+      "You are a Lead UI/UX Visual Reviewer and Dashboard Designer. Your mission is to inspect the visual aesthetics, responsive layout, color harmony, typography, and KPI readability of the generated dashboard artifact before final publication.",
     tools: ["artifact_reader", "visual_checklist"],
   },
   {
     id: "final_editor",
-    index: "08",
+    index: "10",
     role: "Final Editor",
     system:
-      "You are a Chief Agricultural Economist and Senior Executive Briefing Editor. Your mission is to synthesize verified empirical evidence into a compelling, insightful, and comprehensive executive agricultural report. You explain structural shifts in Brazilian agribusiness (2019-2024), contrast acreage expansion with technological yield gains, analyze nominal commodity value surges, and strictly cite canonical evidence IDs (e.g. [sql:40099:production_tonnes]) for every factual claim. You state limitations, contextualize market dynamics, and deliver actionable strategic recommendations.",
+      "You are a Chief Agricultural Economist and Senior Executive Briefing Editor. Your mission is to synthesize verified empirical evidence into a compelling, insightful, and comprehensive executive agricultural report with strict citations.",
     tools: ["approved_evidence_reader", "validation_ledger"],
   },
 ];
 
-const gates = ["Schema", "Python", "SQL", "Agreement", "Provenance", "Visual"];
+const gates = ["Schema", "Python", "SQL", "Agreement", "Specs", "UI/UX"];
 
 type RunState = "idle" | "submitting" | "accepted" | "running" | "completed" | "failed" | "error";
 type ConnectionState = "checking" | "connected" | "offline";
@@ -115,11 +131,21 @@ type ModelStatus = {
   quantization?: string | null;
 };
 
+type InterAgentMessage = {
+  timestamp: string;
+  sender: string;
+  receiver: string;
+  summary: string;
+  verdict: string;
+  payload?: any;
+};
+
 type RunEvent = {
   sequence: number;
   node: string;
   event_type: string;
   message: string;
+  data?: any;
 };
 
 type RunSnapshot = {
@@ -130,12 +156,12 @@ type RunSnapshot = {
 };
 
 const gateNodes: Record<string, string> = {
-  Schema: "data_profiler",
-  Python: "python_analyst",
-  SQL: "sql_analyst",
-  Agreement: "evidence_reconciler",
-  Provenance: "dashboard_engineer",
-  Visual: "visual_reviewer",
+  Schema: "business_agent",
+  Python: "python_reviewer",
+  SQL: "sql_reviewer",
+  Agreement: "reconciliation_agent",
+  Specs: "business_reviewer",
+  "UI/UX": "ui_ux_reviewer",
 };
 
 function BrandIcon() {
@@ -190,7 +216,6 @@ function AgentNode({
 export default function Home() {
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [agentPrompts, setAgentPrompts] = useState<Record<string, string>>({});
-  const [showAgentConfig, setShowAgentConfig] = useState(true);
   const [runState, setRunState] = useState<RunState>("idle");
   const [runMessage, setRunMessage] = useState("Awaiting a connected model and graph runtime.");
   const [connection, setConnection] = useState<ConnectionState>("checking");
@@ -198,126 +223,144 @@ export default function Home() {
   const [runId, setRunId] = useState<string | null>(null);
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
 
-  const isCustomPrompt = prompt.trim() !== defaultPrompt.trim();
-  const customAgentsCount = Object.keys(agentPrompts).filter(
-    (id) => agentPrompts[id] !== defaultAgents.find((a) => a.id === id)?.system,
-  ).length;
-
-  const getAgentSystemPrompt = (id: string) => {
-    return agentPrompts[id] ?? defaultAgents.find((a) => a.id === id)?.system ?? "";
-  };
-
-  const handleAgentPromptChange = (id: string, text: string) => {
-    setAgentPrompts((prev) => ({ ...prev, [id]: text }));
-  };
-
-  const handleResetAgentPrompt = (id: string) => {
-    setAgentPrompts((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  };
-
-  const handleResetAllAgentPrompts = () => {
-    setAgentPrompts({});
-  };
+  // Fetch initial default agent prompts from runtime
+  useEffect(() => {
+    async function fetchAgents() {
+      try {
+        const res = await fetch("/api/agents");
+        if (res.ok) {
+          const data = (await res.json()) as Array<{ id: string; system: string }>;
+          const initialMap: Record<string, string> = {};
+          data.forEach((agent) => {
+            initialMap[agent.id] = agent.system;
+          });
+          setAgentPrompts((prev) => (Object.keys(prev).length === 0 ? initialMap : prev));
+        }
+      } catch {
+        // Fallback to local defaultAgents if offline
+      }
+    }
+    void fetchAgents();
+  }, []);
 
   const checkModel = useCallback(async () => {
     setConnection("checking");
     try {
       const response = await fetch("/api/model-status", { cache: "no-store" });
-      const data = (await response.json()) as ModelStatus;
-      setModelStatus(data);
-      setConnection(data.connected ? "connected" : "offline");
+      const payload = (await response.json()) as ModelStatus;
+      setModelStatus(payload);
+      setConnection(payload.connected ? "connected" : "offline");
     } catch {
-      setModelStatus({ connected: false, model: null, message: "Model status check failed." });
+      setModelStatus({ connected: false, model: null, message: "Model proxy unreachable." });
       setConnection("offline");
     }
   }, []);
 
   useEffect(() => {
-    const initialCheck = window.setTimeout(() => void checkModel(), 0);
-    const interval = window.setInterval(() => void checkModel(), 30_000);
-    return () => {
-      window.clearTimeout(initialCheck);
-      window.clearInterval(interval);
-    };
+    void checkModel();
   }, [checkModel]);
 
   useEffect(() => {
-    if (!runId || ["completed", "failed", "error"].includes(runState)) return;
-    let cancelled = false;
-    const poll = async () => {
+    if (!runId || !["submitting", "accepted", "running"].includes(runState)) return;
+    const interval = setInterval(async () => {
       try {
-        const response = await fetch(`/api/run-status?run_id=${runId}`, { cache: "no-store" });
-        const snapshot = (await response.json()) as RunSnapshot & { error?: string };
-        if (!response.ok) throw new Error(snapshot.error ?? "Unable to read graph status.");
-        if (cancelled) return;
-        setRunEvents(snapshot.events ?? []);
-        const latest = snapshot.events?.at(-1);
-        setRunMessage(latest?.message ?? `Run ${runId} is ${snapshot.status}.`);
-        setRunState(snapshot.status === "queued" ? "accepted" : snapshot.status);
-        if (snapshot.status === "failed" && snapshot.error) setRunMessage(snapshot.error);
-      } catch (error) {
-        if (!cancelled) {
-          setRunState("error");
-          setRunMessage(error instanceof Error ? error.message : "Graph polling failed.");
+        const response = await fetch(`/api/run-status?run_id=${encodeURIComponent(runId)}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as RunSnapshot;
+        setRunEvents(payload.events ?? []);
+        if (payload.status === "completed") {
+          setRunState("completed");
+          setRunMessage("Graph reached the terminal editor node with approved evidence.");
+        } else if (payload.status === "failed") {
+          setRunState("failed");
+          setRunMessage(payload.error ?? "Graph execution failed.");
+        } else {
+          setRunState("running");
+          const latest = payload.events[payload.events.length - 1];
+          if (latest) {
+            setRunMessage(`[${latest.node}] ${latest.message}`);
+          }
         }
+      } catch {
+        // Retrying on next poll
       }
-    };
-    void poll();
-    const interval = window.setInterval(() => void poll(), 2_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
+    }, 400);
+    return () => clearInterval(interval);
   }, [runId, runState]);
 
-  async function runGraph() {
-    if (prompt.trim().length < 20) return;
-    setRunState("submitting");
-    setRunMessage("Validating prompt and initializing LangGraph state…");
-    try {
-      const activeCustomPrompts =
-        customAgentsCount > 0
-          ? Object.fromEntries(
-              Object.entries(agentPrompts).filter(
-                ([id, text]) => text !== defaultAgents.find((a) => a.id === id)?.system,
-              ),
-            )
-          : undefined;
+  const handleAgentPromptChange = (agentId: string, newPrompt: string) => {
+    setAgentPrompts((prev) => ({
+      ...prev,
+      [agentId]: newPrompt,
+    }));
+  };
 
+  const handleResetAgentPrompt = (agentId: string) => {
+    const defaultAgent = defaultAgents.find((a) => a.id === agentId);
+    if (defaultAgent) {
+      setAgentPrompts((prev) => ({
+        ...prev,
+        [agentId]: defaultAgent.system,
+      }));
+    }
+  };
+
+  const handleResetAllAgentPrompts = () => {
+    const initialMap: Record<string, string> = {};
+    defaultAgents.forEach((a) => {
+      initialMap[a.id] = a.system;
+    });
+    setAgentPrompts(initialMap);
+  };
+
+  const getAgentSystemPrompt = (agentId: string) => {
+    return agentPrompts[agentId] ?? defaultAgents.find((a) => a.id === agentId)?.system ?? "";
+  };
+
+  const customAgentsCount = defaultAgents.filter(
+    (agent) => getAgentSystemPrompt(agent.id) !== agent.system
+  ).length;
+
+  const runGraph = async () => {
+    setRunState("submitting");
+    setRunMessage("Dispatching graph execution to local LangGraph runtime…");
+    setRunEvents([]);
+    try {
       const response = await fetch("/api/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: prompt.trim(),
-          provider: "local-qwen",
-          agent_prompts: activeCustomPrompts,
-        }),
+        body: JSON.stringify({ prompt, agent_prompts: agentPrompts }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "The runtime rejected this run.");
-      setRunId(data.run_id);
-      setRunEvents([]);
+      const payload = (await response.json()) as { run_id?: string; error?: string; status?: string };
+      if (!response.ok || !payload.run_id) {
+        setRunState("error");
+        setRunMessage(payload.error ?? "Submission failed.");
+        return;
+      }
+      setRunId(payload.run_id);
       setRunState("accepted");
-      setRunMessage(data.message ?? `Run ${data.run_id ?? "accepted"} entered the validated graph.`);
+      setRunMessage(`Graph run accepted (${payload.run_id}). Awaiting node events…`);
     } catch (error) {
       setRunState("error");
-      setRunMessage(error instanceof Error ? error.message : "Unable to reach the agent runtime.");
+      setRunMessage(error instanceof Error ? error.message : "Submission network error.");
     }
-  }
+  };
 
-  const modelLabel =
-    connection === "checking" ? "Checking local endpoint" : modelStatus?.model ?? "Model server unreachable";
-  const canRun =
-    connection === "connected" &&
-    prompt.trim().length >= 20 &&
-    !["submitting", "accepted", "running"].includes(runState);
-  const latestNode = runEvents.at(-1)?.node;
+  const canRun = connection === "connected" && !["submitting", "accepted", "running"].includes(runState);
+  const latestNode = runEvents[runEvents.length - 1]?.node;
+  const isCustomPrompt = prompt !== defaultPrompt;
+  const modelLabel = modelStatus?.model ? modelStatus.model.replace(/^qwen\//, "") : "local model";
+
+  // Filter real-time inter-agent messages
+  const interAgentMessages: InterAgentMessage[] = runEvents
+    .filter((ev) => ev.event_type === "message_transfer" && ev.data)
+    .map((ev) => ev.data as InterAgentMessage);
+
   const gateStatus = (gate: string) => {
-    const events = runEvents.filter((event) => event.node === gateNodes[gate]);
+    const targetNode = gateNodes[gate];
+    const events = runEvents.filter((event) => event.node === targetNode);
     if (events.some((event) => event.event_type === "failed")) return "FAILED";
     if (events.some((event) => event.event_type === "completed")) return "PASS";
     return "WAIT";
@@ -340,21 +383,24 @@ export default function Home() {
           <a className="active" href="#workspace">
             <span>01</span>Run console
           </a>
-          <a href="#agents">
-            <span>02</span>Agent prompts
-          </a>
           <a href="#method">
-            <span>03</span>Method
+            <span>02</span>Graph Topology
+          </a>
+          <a href="#agents">
+            <span>03</span>Agent prompts
+          </a>
+          <a href="#inter-agent-feed">
+            <span>04</span>Message stream
           </a>
           <a href="#evidence">
-            <span>04</span>Evidence
+            <span>05</span>Ledger
           </a>
         </nav>
 
         <div className="rail-note">
           <span className="condition-token">CONDITION B</span>
           <strong>Validated orchestration</strong>
-          <p>Typed state, scoped tools, evidence gates, and bounded repair paths.</p>
+          <p>Typed state, parallel sandboxes, dual reviewers, and real-time inter-agent audit trails.</p>
         </div>
 
         <div className="rail-footer">
@@ -404,8 +450,8 @@ export default function Home() {
               Make evidence travel.
             </h2>
             <p>
-              The intervention adds specialist context, typed state, independent analysis paths, validation
-              gates, and inspectable recovery.
+              The architecture executes parallel sandboxes, independent reviewers, mathematical reconciliation,
+              and iterative business/UI review loops before producing the concise HTML dashboard.
             </p>
           </div>
           <div className="hero-index" aria-label="Experiment condition B">
@@ -418,22 +464,22 @@ export default function Home() {
           <article>
             <small>TOPOLOGY</small>
             <strong>State graph</strong>
-            <span>Conditional routing</span>
+            <span>Handwritten loopback</span>
           </article>
           <article>
             <small>MODEL ROLES</small>
-            <strong>8 specialists</strong>
+            <strong>10 specialists</strong>
             <span>Scoped responsibility</span>
           </article>
           <article>
             <small>VALIDATION</small>
             <strong>6 gates</strong>
-            <span>Evidence before prose</span>
+            <span>Zero tolerance (&lt;1e-9)</span>
           </article>
           <article>
             <small>RETRY POLICY</small>
             <strong>2×</strong>
-            <span>Targeted, then stop</span>
+            <span>Iterative repair loop</span>
           </article>
         </section>
 
@@ -448,12 +494,12 @@ export default function Home() {
                 </div>
               </div>
               <span className={`tag ${isCustomPrompt ? "tag-custom" : ""}`}>
-                {isCustomPrompt ? "CUSTOM PROMPT · EDITABLE" : "BENCHMARK V1.0 · DEFAULT"}
+                {isCustomPrompt ? "CUSTOM PROMPT" : "DEFAULT BENCHMARK"}
               </span>
             </div>
 
             <div className="preset-selector">
-              <small>ANALYTICAL PRESETS:</small>
+              <small>PRESET SCENARIOS:</small>
               <div className="preset-chips">
                 {promptPresets.map((preset) => (
                   <button
@@ -471,7 +517,7 @@ export default function Home() {
                     type="button"
                     className="preset-chip reset-chip"
                     onClick={() => setPrompt(defaultPrompt)}
-                    title="Reset to benchmark default"
+                    title="Reset to default benchmark prompt"
                   >
                     Reset
                   </button>
@@ -479,33 +525,25 @@ export default function Home() {
               </div>
             </div>
 
-            <label className="sr-only" htmlFor="business-prompt">
-              Business research prompt
-            </label>
             <textarea
-              id="business-prompt"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Enter your custom agricultural research prompt (minimum 20 characters)..."
+              placeholder="Enter agricultural analysis prompt..."
               disabled={["submitting", "accepted", "running"].includes(runState)}
             />
             <div className="prompt-footer">
-              <small>
-                {prompt.trim().length} / 20,000 chars{" "}
-                {prompt.trim().length < 20 ? "(minimum 20 chars required)" : ""}
-              </small>
+              <small>{prompt.length} characters</small>
             </div>
-
             <div className="prompt-meta">
               <div>
-                <small>PROVIDER</small>
-                <strong>Local Qwen</strong>
-                <span>OpenAI-compatible API</span>
+                <small>SOURCE TABLE</small>
+                <strong>SIDRA PAM 5457</strong>
+                <span>IBGE municipal records</span>
               </div>
               <div>
-                <small>DATA SCOPE</small>
-                <strong>IBGE PAM</strong>
-                <span>Municipal · 2019–2024</span>
+                <small>COMPARISON</small>
+                <strong>2019 vs 2024</strong>
+                <span>Pre vs post baseline</span>
               </div>
               <div>
                 <small>MODEL WINDOW</small>
@@ -531,104 +569,151 @@ export default function Home() {
             </div>
           </article>
 
+          {/* Interactive Graph Diagram matching Handwritten Sketch */}
           <article className="card method-card" id="method">
             <div className="card-head">
               <div>
                 <span className="card-index">02</span>
                 <div>
                   <small>EXECUTION DESIGN</small>
-                  <h3>Validated agent graph</h3>
+                  <h3>Handwritten Architecture Graph</h3>
                 </div>
               </div>
               <span className="tag">LANGGRAPH · TYPED STATE</span>
             </div>
+
             <div className="agent-graph" aria-label="Robust harness agent graph">
+              {/* Top: Business Agent */}
               <div className="graph-single">
                 <AgentNode
                   id="01"
-                  title="Business Analyst"
-                  detail="Metric contract"
-                  active={runState === "submitting" || latestNode === "business_analyst"}
+                  title="Business Agent"
+                  detail="Metric Contract Specs"
+                  active={runState === "submitting" || latestNode === "business_agent"}
                 />
               </div>
-              <span className="down-link" />
-              <div className="graph-single">
-                <AgentNode
-                  id="02"
-                  title="Data Profiler"
-                  detail="Schema + quality"
-                  active={latestNode === "data_profiler"}
-                />
-              </div>
+
               <div className="fork-link">
                 <i />
                 <i />
                 <i />
               </div>
-              <div className="parallel-row">
-                <AgentNode
-                  id="03"
-                  title="SQL Analyst"
-                  detail="Read-only DuckDB"
-                  active={latestNode === "sql_analyst"}
-                />
-                <AgentNode
-                  id="04"
-                  title="Python Analyst"
-                  detail="Sandboxed analysis"
-                  active={latestNode === "python_analyst"}
-                />
+
+              {/* Parallel execution paths: Python vs SQL */}
+              <div className="parallel-columns">
+                {/* Left Column: Python Path */}
+                <div className="graph-column">
+                  <span className="column-label">PYTHON / PANDAS BRANCH</span>
+                  <AgentNode
+                    id="04"
+                    title="Python Agent"
+                    detail="Vector Analysis"
+                    active={latestNode === "python_agent"}
+                  />
+                  <span className="down-link-sm" />
+                  <div className="sandbox-node">
+                    <small>PYTHON SANDBOX</small>
+                    <span>Runs? Execution</span>
+                  </div>
+                  <span className="down-link-sm" />
+                  <AgentNode
+                    id="05"
+                    title="Python Reviewer"
+                    detail="Good? Bounds QA"
+                    active={latestNode === "python_reviewer"}
+                  />
+                </div>
+
+                {/* Right Column: SQL Path */}
+                <div className="graph-column">
+                  <span className="column-label">SQL SPECIALIST BRANCH</span>
+                  <AgentNode
+                    id="02"
+                    title="SQL Specialist"
+                    detail="DuckDB Querying"
+                    active={latestNode === "sql_agent"}
+                  />
+                  <span className="down-link-sm" />
+                  <div className="sandbox-node">
+                    <small>SQL SANDBOX</small>
+                    <span>Runs? Read-Only</span>
+                  </div>
+                  <span className="down-link-sm" />
+                  <AgentNode
+                    id="03"
+                    title="SQL Reviewer"
+                    detail="Good? Syntax QA"
+                    active={latestNode === "sql_reviewer"}
+                  />
+                </div>
               </div>
+
               <div className="join-link">
                 <i />
                 <i />
                 <i />
               </div>
+
+              {/* Reconciliation Gate */}
               <div className="graph-single">
                 <AgentNode
-                  id="05"
-                  title="Evidence Reconciler"
-                  detail="Numeric agreement gate"
-                  active={latestNode === "evidence_reconciler"}
+                  id="06"
+                  title="Results Match Reconciler"
+                  detail="The Results Match? (<1e-9)"
+                  active={latestNode === "reconciliation_agent"}
                 />
               </div>
+
               <span className="down-link" />
-              <div className="final-row">
-                <AgentNode
-                  id="06"
-                  title="Dashboard"
-                  detail="Approved facts"
-                  active={latestNode === "dashboard_engineer"}
-                />
+
+              {/* Bottom Review & Polish Loop */}
+              <div className="bottom-review-flow">
                 <AgentNode
                   id="07"
-                  title="Visual QA"
-                  detail="Rendered review"
-                  active={latestNode === "visual_reviewer"}
+                  title="Dashboard Agent"
+                  detail="Python/HTML Creator"
+                  active={latestNode === "dashboard_agent"}
                 />
+                <span className="right-link-arrow">➔</span>
                 <AgentNode
                   id="08"
-                  title="Final Editor"
-                  detail="Cited narrative"
+                  title="Business Reviewer"
+                  detail="According to Specs?"
+                  active={latestNode === "business_reviewer"}
+                />
+                <span className="right-link-arrow">➔</span>
+                <AgentNode
+                  id="09"
+                  title="UI / UX Agent"
+                  detail="Visually Appealing?"
+                  active={latestNode === "ui_ux_reviewer"}
+                />
+                <span className="right-link-arrow">➔</span>
+                <AgentNode
+                  id="10"
+                  title="Final Product"
+                  detail="HTML Dashboard"
                   active={latestNode === "final_editor"}
                 />
               </div>
             </div>
+
             <div className="method-foot">
-              <span>Checkpointed state</span>
-              <span>Role-scoped tools</span>
-              <span>Bounded repair edges</span>
+              <span>Iterative review loop</span>
+              <span>Parallel sandboxes</span>
+              <span>Zero-hallucination gate</span>
             </div>
           </article>
         </section>
 
+        {/* 03 · Agent System Messages & Prompts */}
         <section className="agent-config-card" id="agents">
           <div className="card-head">
             <div>
               <span className="card-index">03</span>
               <div>
                 <small>ROLE ORCHESTRATION</small>
-                <h3>Agent System Messages & Prompts (8 Roles)</h3>
+                <h3>Agent System Messages & Prompts (10 Roles)</h3>
               </div>
             </div>
             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -651,8 +736,8 @@ export default function Home() {
             </div>
           </div>
           <p style={{ fontSize: "11.5px", color: "var(--muted)", marginTop: "6px", marginBottom: "12px" }}>
-            Inspect and customize the system message for each specialist agent. Custom prompts apply to
-            subsequent runs in-memory without modifying the underlying repository files.
+            Customize the system message for each specialist agent. Custom prompts apply to subsequent runs
+            in-memory and are embedded into the resulting HTML dashboard.
           </p>
 
           <div className="agent-config-grid">
@@ -699,6 +784,59 @@ export default function Home() {
           </div>
         </section>
 
+        {/* 04 · Real-Time Inter-Agent Message Stream */}
+        <section className="card message-stream-card" id="inter-agent-feed">
+          <div className="card-head">
+            <div>
+              <span className="card-index">04</span>
+              <div>
+                <small>REAL-TIME COMMUNICATION</small>
+                <h3>Live Inter-Agent Message Stream ({interAgentMessages.length} Transfers)</h3>
+              </div>
+            </div>
+            <span className="tag tag-custom">LIVE DIALOGUE & TRANSFERS</span>
+          </div>
+
+          <div className="message-stream-container">
+            {interAgentMessages.length === 0 ? (
+              <div className="stream-empty">
+                <p>
+                  No inter-agent messages yet. Start a benchmark run to watch agents exchange metric contracts,
+                  sandbox results, review verdicts, and approvals in real time.
+                </p>
+              </div>
+            ) : (
+              <div className="message-list">
+                {interAgentMessages.map((msg, index) => (
+                  <article className={`message-item verdict-${msg.verdict.toLowerCase()}`} key={index}>
+                    <div className="message-meta">
+                      <span className="msg-seq">#{index + 1}</span>
+                      <span className="msg-route">
+                        <strong>{msg.sender.replace("_", " ")}</strong> ➔{" "}
+                        <strong>{msg.receiver.replace("_", " ")}</strong>
+                      </span>
+                      <span className={`badge-verdict verdict-badge-${msg.verdict.toLowerCase()}`}>
+                        {msg.verdict}
+                      </span>
+                      <span className="msg-time">{msg.timestamp?.split("T")[1]?.slice(0, 8) || ""}</span>
+                    </div>
+                    <p className="msg-summary">{msg.summary}</p>
+                    {msg.payload && Object.keys(msg.payload).length > 0 && (
+                      <details className="msg-payload-details">
+                        <summary>Inspect Transferred Payload</summary>
+                        <pre>
+                          <code>{JSON.stringify(msg.payload, null, 2)}</code>
+                        </pre>
+                      </details>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* 05 · Evidence & Validation Ledger */}
         <section className="evidence-grid" id="evidence">
           <article className={`card run-card ${runState}`}>
             <div className="mini-head">

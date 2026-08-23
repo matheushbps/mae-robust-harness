@@ -281,6 +281,7 @@ def render_dashboard_html(
     source = str(payload.get("source", "IBGE SIDRA PAM table 5457"))
     evidence_list: list[dict[str, Any]] = payload.get("evidence", [])
     validation_list: list[dict[str, Any]] = payload.get("validation", [])
+    agent_prompts: dict[str, Any] = payload.get("agent_prompts") or {}
     harness_name = str(payload.get("harness", "MAE Agricultural Benchmark"))
     run_id = str(payload.get("run_id", "local-run"))
     created_at = str(payload.get("created_at", utc_now()))
@@ -297,14 +298,26 @@ def render_dashboard_html(
             metric_totals[m]["start"] += float(item["start_value"])
             metric_totals[m]["end"] += float(item["end_value"])
 
+    area_start = metric_totals["planted_area_ha"]["start"]
+    area_end = metric_totals["planted_area_ha"]["end"]
+    prod_start = metric_totals["production_tonnes"]["start"]
+    prod_end = metric_totals["production_tonnes"]["end"]
+    val_start = metric_totals["production_value_thousand_brl"]["start"]
+    val_end = metric_totals["production_value_thousand_brl"]["end"]
+
+    # Compute overall yield
+    yield_start = (prod_start * 1000.0 / area_start) if area_start > 0 else 0.0
+    yield_end = (prod_end * 1000.0 / area_end) if area_end > 0 else 0.0
+
+    kpi_specs = [
+        ("Total Planted Area", area_start, area_end, "ha"),
+        ("Total Production", prod_start, prod_end, "tonnes"),
+        ("Average Yield", yield_start, yield_end, "kg/ha"),
+        ("Gross Crop Value", val_start, val_end, "thousand BRL"),
+    ]
+
     kpi_cards = []
-    for metric_key, label, unit in [
-        ("planted_area_ha", "Total Planted Area", "ha"),
-        ("production_tonnes", "Total Production", "tonnes"),
-        ("production_value_thousand_brl", "Total Production Value", "thousand BRL"),
-    ]:
-        start = metric_totals[metric_key]["start"]
-        end = metric_totals[metric_key]["end"]
+    for label, start, end, unit in kpi_specs:
         change = ((end - start) / start * 100.0) if start > 0 else 0.0
         sign = "+" if change >= 0 else ""
         css_class = "positive" if change >= 0 else "negative"
@@ -375,7 +388,7 @@ def render_dashboard_html(
               <td><span class="badge {badge_type}">{chg_str}</span></td>
               <td>
                 <details>
-                  <summary>Query</summary>
+                  <summary>Query & Hash</summary>
                   <pre><code>{method_str}\n\nSHA: {ds_hash}</code></pre>
                 </details>
               </td>
@@ -416,9 +429,34 @@ def render_dashboard_html(
           {f'<ul class="briefing-insights">{b_insights_html}</ul>' if b_insights_html else ''}
         </section>"""
 
+    agent_prompts_section = ""
+    if agent_prompts:
+        agent_items = []
+        for role_id, prompt_text in agent_prompts.items():
+            agent_items.append(
+                f"""<div class="agent-prompt-card">
+                  <div class="agent-prompt-header">
+                    <strong>{html.escape(role_id.replace('_', ' ').title())}</strong>
+                    <span class="badge badge-accent">Active System Prompt</span>
+                  </div>
+                  <pre class="agent-prompt-text"><code>{html.escape(str(prompt_text))}</code></pre>
+                </div>"""
+            )
+        agent_prompts_section = f"""<section class="card" id="agent-prompts-inspector">
+          <div class="card-header">
+            <h2>Active Agent System Prompts & Configurations</h2>
+            <span class="badge badge-accent">{len(agent_prompts)} Configured Roles</span>
+          </div>
+          <details class="evidence-details">
+            <summary>Click to inspect the exact system messages used in this execution run</summary>
+            <div class="agent-prompts-container">
+              {"".join(agent_items)}
+            </div>
+          </details>
+        </section>"""
+
     narrative_section = ""
     if narrative:
-        # Highlight evidence IDs in narrative
         highlighted = re.sub(
             r"\[(sql:[^\]]+|python:[^\]]+)\]",
             r'<span class="evidence-tag">[\1]</span>',
@@ -712,6 +750,48 @@ def render_dashboard_html(
       line-height: 1.5;
     }}
 
+    /* Agent Prompt Inspector */
+    .agent-prompts-container {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }}
+    .agent-prompt-card {{
+      background: var(--surface-hover);
+      border: 1px solid var(--surface-border);
+      border-radius: 8px;
+      padding: 1rem;
+    }}
+    .agent-prompt-header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+      color: var(--accent);
+    }}
+    .agent-prompt-text {{
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      line-height: 1.45;
+      background: rgba(0, 0, 0, 0.25);
+      padding: 0.75rem;
+      border-radius: 6px;
+      max-height: 160px;
+      overflow-y: auto;
+    }}
+    .evidence-details summary {{
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 500;
+      padding: 0.5rem 0;
+      user-select: none;
+    }}
+
     /* Narrative */
     .narrative-content p {{
       margin-bottom: 1rem;
@@ -784,26 +864,31 @@ def render_dashboard_html(
       <h2>Approved Evidence & Provenance Ledger</h2>
       <span class="badge badge-pass">{len(evidence_list)} Verified Claims</span>
     </div>
-    <div class="table-wrapper">
-      <table id="evidence-table">
-        <thead>
-          <tr>
-            <th>Evidence ID</th>
-            <th>Crop</th>
-            <th>Metric</th>
-            <th>Unit</th>
-            <th>2019 Value</th>
-            <th>2024 Value</th>
-            <th>Change %</th>
-            <th>Method & Hash</th>
-          </tr>
-        </thead>
-        <tbody>
-          {"".join(evidence_rows)}
-        </tbody>
-      </table>
-    </div>
+    <details class="evidence-details" open>
+      <summary>Click to view/collapse the auditable evidence table</summary>
+      <div class="table-wrapper">
+        <table id="evidence-table">
+          <thead>
+            <tr>
+              <th>Evidence ID</th>
+              <th>Crop</th>
+              <th>Metric</th>
+              <th>Unit</th>
+              <th>2019 Value</th>
+              <th>2024 Value</th>
+              <th>Change %</th>
+              <th>Method & Hash</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(evidence_rows)}
+          </tbody>
+        </table>
+      </div>
+    </details>
   </section>
+
+  {agent_prompts_section}
 
   <section class="card" id="validation">
     <div class="card-header">
@@ -851,6 +936,7 @@ def write_dashboard_artifact(
     validation: list[ValidationCheck],
     narrative: str | None = None,
     dashboard_briefing: dict[str, Any] | None = None,
+    agent_prompts: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -869,6 +955,8 @@ def write_dashboard_artifact(
     }
     if dashboard_briefing:
         payload["dashboard_briefing"] = dashboard_briefing
+    if agent_prompts:
+        payload["agent_prompts"] = agent_prompts
     if narrative:
         payload["narrative"] = narrative
     if metadata:
@@ -876,7 +964,9 @@ def write_dashboard_artifact(
 
     json_target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     
-    html_content = render_dashboard_html(payload, narrative=narrative, dashboard_briefing=dashboard_briefing)
+    html_content = render_dashboard_html(
+        payload, narrative=narrative, dashboard_briefing=dashboard_briefing
+    )
     html_target.write_text(html_content, encoding="utf-8")
     
     return json_target

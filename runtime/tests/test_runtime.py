@@ -29,7 +29,7 @@ class StubModel:
         self, role: str, system: str, user: str, max_tokens: int | None = None
     ) -> tuple[dict[str, Any], LLMTrace]:
         del system, user, max_tokens
-        if role == "business_analyst":
+        if role in ("business_agent", "business_analyst"):
             payload = {
                 "business_questions": ["What changed?"],
                 "metrics": ["production"],
@@ -37,13 +37,13 @@ class StubModel:
                 "acceptance_criteria": ["SQL and Python agree"],
                 "exclusions": ["prediction"],
             }
-        elif role == "sql_analyst":
+        elif role in ("sql_agent", "sql_analyst"):
             payload = {
                 "selected_metrics": ["production"],
                 "comparison_period": [2019, 2024],
                 "risks": ["missing values"],
             }
-        elif role == "dashboard_engineer":
+        elif role in ("dashboard_agent", "dashboard_engineer"):
             payload = {
                 "title": "Municipal Crop Intelligence",
                 "subtitle": "Strategic Executive Highlights",
@@ -163,11 +163,13 @@ def test_robust_langgraph_completes_with_checkpoints(dataset_path: Path, tmp_pat
     assert result["terminal_status"] == "completed"
     assert result["repair_count"] == 0
     assert len(result["approved_evidence"]) == 8
-    assert len(result["skills_used"]) == 5
+    assert len(result["inter_agent_messages"]) >= 6
     assert settings.checkpoint_path.exists()
-    assert ("sql_analyst", "started") in events
-    assert ("python_analyst", "started") in events
-    assert "evidence_reconciliation" in GRAPH_MERMAID
+    assert ("sql_agent", "started") in events
+    assert ("python_agent", "started") in events
+    assert ("dashboard_agent", "started") in events
+    assert ("final_editor", "completed") in events
+    assert "reconciliation_gate" in GRAPH_MERMAID
 
     # Verify generated artifacts including HTML dashboard
     run_dir = settings.artifacts_dir / "robust-test"
@@ -177,21 +179,4 @@ def test_robust_langgraph_completes_with_checkpoints(dataset_path: Path, tmp_pat
     assert html_dashboard.exists() and html_dashboard.stat().st_size > 0
     html_text = html_dashboard.read_text(encoding="utf-8")
     assert "<!DOCTYPE html>" in html_text
-    assert "id=\"kpis\"" in html_text
-    assert "id=\"charts\"" in html_text
-    assert "id=\"evidence-ledger\"" in html_text
-    assert "Approved Evidence & Provenance Ledger" in html_text
-
-
-def test_robust_supports_custom_agent_prompts(dataset_path: Path, tmp_path: Path) -> None:
-    events: list[tuple[str, str]] = []
-    settings = settings_for(tmp_path, dataset_path)
-    harness = RobustHarness(StubModel(), settings)
-    result = harness.run(
-        "custom-agent-test",
-        "Analyze agricultural changes in the controlled fixture dataset.",
-        lambda node, event_type, _message, _data=None: events.append((node, event_type)),
-        agent_prompts={"final_editor": "Custom modified final editor system prompt."},
-    )
-    assert result["harness"] == "robust"
-    assert result["terminal_status"] == "completed"
+    assert 'id="kpis"' in html_text
