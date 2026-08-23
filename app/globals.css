@@ -256,6 +256,11 @@ textarea:focus { border-color: var(--line-dark); border-left-color: var(--accent
 .custom-prompts-banner span { font: 700 9.5px var(--font-geist-mono); color: #1e5e3a; display: flex; align-items: center; gap: 6px; }
 .custom-prompts-banner small { color: #43855f; font-size: 8.5px; }
 
+.architecture-explainer { margin: 14px 0; padding: 12px 14px; border-left: 3px solid #39785d; background: #f0faf4; display: grid; gap: 3px; }
+.architecture-explainer strong { font-size: 11px; color: #215c3d; }
+.architecture-explainer span { font-size: 10px; line-height: 1.45; color: #3f5f4c; }
+.architecture-explainer small { font: 700 8px var(--font-geist-mono); color: #39785d; text-transform: uppercase; }
+
 /* Handwritten Graph Redesign CSS */
 .parallel-columns { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 2px 0; }
 .graph-column { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 8px; border: 1px dashed var(--line-dark); background: rgba(255,255,255,0.4); border-radius: 4px; }
@@ -296,4 +301,3 @@ textarea:focus { border-color: var(--line-dark); border-left-color: var(--accent
 .msg-payload-details { margin-top: 4px; }
 .msg-payload-details summary { cursor: pointer; color: var(--accent-dark); font: 600 8px var(--font-geist-mono); user-select: none; }
 .msg-payload-details pre { margin-top: 6px; padding: 8px; background: #16211b; color: #d7e4dc; border-radius: 4px; font: 400 9px var(--font-geist-mono); max-height: 180px; overflow-x: auto; overflow-y: auto; }
-

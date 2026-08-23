@@ -40,6 +40,7 @@ def test_executes_readonly_sql_with_window_function(dataset_path: Path) -> None:
         ("DELETE FROM crop_metrics", "unsafe_sql"),
         ("SELECT 1; SELECT 2", "unsafe_sql"),
         ("INSTALL httpfs", "unsafe_sql"),
+        ("SELECT * FROM read_csv_auto('/etc/hosts', header=false)", "unsafe_sql"),
     ],
 )
 def test_rejects_unsafe_sql(dataset_path: Path, code: str, diagnostic: str) -> None:

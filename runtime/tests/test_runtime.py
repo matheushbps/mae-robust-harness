@@ -16,7 +16,7 @@ from mae_runtime.analytics import (
 from mae_runtime.config import Settings
 from mae_runtime.contracts import LLMTrace
 from mae_runtime.dataset import CROPS, build_database_from_rows, build_fixture_database, estimate_dataset
-from mae_runtime.graph import GRAPH_MERMAID, RobustHarness
+from mae_runtime.graph import GRAPH_MERMAID, RobustHarness, branch_repair_context
 from mae_runtime.model_client import QwenClient
 
 
@@ -341,6 +341,8 @@ def test_robust_dashboard_agent_receives_the_original_visual_request(
     )
 
     assert "black background" in model.users["dashboard_agent"]
+    html = (tmp_path / "outputs/robust-black-theme/dashboard.html").read_text()
+    assert "--bg: #000000;" in html
 
 
 def test_robust_dashboard_renderer_applies_structured_visual_theme() -> None:
@@ -378,10 +380,38 @@ def test_robust_repairs_only_rejected_sql_branch_and_preserves_python(tmp_path: 
     assert result["generated_analysis"]["sql"]["status"] == "completed"
     assert result["generated_analysis"]["python"]["status"] == "completed"
     assert len(result["temporal_rows"]) == 42
+    assert result["approved_evidence"] == []
+    assert result["release_certificate"]["task_id"] == "mae-temporal-window-analysis-v3"
+    assert result["release_certificate"]["status"] == "certified"
+    assert result["release_certificate"]["approved_rows"] == 42
+    assert "improved production rank" in result["narrative"]
     assert ("sql_reviewer", "branch_repair") in events
     html = (tmp_path / "outputs" / "robust-local-repair" / "dashboard.html").read_text()
     assert 'id="temporal-analysis"' in html
     assert "42 reconciled crop-year rows" in html
+
+
+def test_branch_repair_context_contains_only_prior_code_and_diagnostics() -> None:
+    sql = branch_repair_context(
+        "sql", "SELECT 1", [{"code": "wrong_row_count", "message": "zero rows"}]
+    )
+    python = branch_repair_context(
+        "python",
+        "x = lambda value: value",
+        [{"code": "unsafe_python", "message": "Lambda"}],
+        repair_attempt=2,
+    )
+
+    assert "SELECT 1" in sql
+    assert "zero rows" in sql
+    assert "40099" not in sql
+    assert "lambda" in python.lower()
+    assert "must change" in python.lower()
+    assert "full corrected code" in python.lower()
+    assert "assumptions" in python.lower()
+    assert "unchanged" in python.lower()
+    assert "zero ast nodes named lambda" in python.lower()
+    assert "repair attempt: 2" in python.lower()
 
 
 def test_robust_rejects_prompt_override_for_deterministic_role(
@@ -419,4 +449,5 @@ def test_robust_uses_certified_fallback_when_final_editor_returns_no_text(
     assert result["terminal_status"] == "completed"
     assert "Certified evidence release" in result["narrative"]
     assert "[sql:" in result["narrative"]
+    assert events.count(("final_editor", "model_retry")) == 2
     assert ("final_editor", "deterministic_fallback") in events

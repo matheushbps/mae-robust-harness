@@ -19,7 +19,7 @@
     "variable_codes": ["8331", "216", "214", "112", "215"]
   },
   "limits": {
-    "max_repair_attempts": 2,
+    "max_repair_attempts": 3,
     "numeric_tolerance": 0.000001,
     "max_sql_rows": 500,
     "network_during_run": false

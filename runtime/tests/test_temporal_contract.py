@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from mae_runtime.temporal_contract import REQUIRED_COLUMNS, validate_temporal_rows
+from mae_runtime.temporal_prompts import temporal_generation_prompt
 
 
 def valid_rows() -> list[dict[str, object]]:
@@ -40,6 +41,12 @@ def test_accepts_exact_temporal_contract() -> None:
     rows = valid_rows()
     assert tuple(rows[0]) == REQUIRED_COLUMNS
     assert validate_temporal_rows(rows, "a" * 64) == []
+
+
+def test_first_attempt_ignores_business_rewording() -> None:
+    first = temporal_generation_prompt("sql", "same request", {"wording": "one"})
+    second = temporal_generation_prompt("sql", "same request", {"wording": "two"})
+    assert first == second
 
 
 def test_rejects_wrong_schema_and_duplicate_grain() -> None:

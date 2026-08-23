@@ -61,5 +61,5 @@ def get_settings() -> Settings:
         artifacts_dir=_path_from_env("ARTIFACTS_DIR", REPOSITORY_ROOT / "outputs/runs"),
         checkpoint_path=_path_from_env("CHECKPOINT_PATH", REPOSITORY_ROOT / "outputs/checkpoints.sqlite"),
         numeric_tolerance=float(os.getenv("NUMERIC_TOLERANCE", "0.000001")),
-        max_repair_attempts=int(os.getenv("MAX_REPAIR_ATTEMPTS", "2")),
+        max_repair_attempts=int(os.getenv("MAX_REPAIR_ATTEMPTS", "3")),
     )

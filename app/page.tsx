@@ -470,6 +470,10 @@ export default function Home() {
     unconfirmedAgentsCount === 0 &&
     !["submitting", "accepted", "running"].includes(runState);
   const latestNode = runEvents[runEvents.length - 1]?.node;
+  const branchRepairs = runEvents.filter((event) => event.event_type === "branch_repair");
+  const approvedTemporalRows = runEvents.find(
+    (event) => event.node === "reconciliation_agent" && event.message.includes("42/42")
+  );
   const isCustomPrompt = prompt !== defaultPrompt;
   const modelLabel = modelStatus?.model ? modelStatus.model.replace(/^qwen\//, "") : "local model";
 
@@ -741,6 +745,12 @@ export default function Home() {
                 </div>
               </div>
               <span className="tag">LANGGRAPH · TYPED STATE</span>
+            </div>
+
+            <div className="architecture-explainer robust-explainer">
+              <strong>Check, explain, repair only what failed</strong>
+              <span>Each generated branch is tested separately. The approved peer waits while only the rejected SQL or Python code returns for correction.</span>
+              <small>{approvedTemporalRows ? "42/42 rows agreed · released" : `${branchRepairs.length} branch correction event${branchRepairs.length === 1 ? "" : "s"}`}</small>
             </div>
 
             <div className="agent-graph" aria-label="Robust harness agent graph">

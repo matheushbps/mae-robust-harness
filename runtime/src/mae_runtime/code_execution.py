@@ -57,11 +57,14 @@ def execute_generated_sql(
     lowered = re.sub(r"\s+", " ", normalized.lower())
     forbidden = re.compile(
         r"\b(insert|update|delete|drop|alter|create|attach|detach|copy|export|import|"
-        r"install|load|pragma|call)\b"
+        r"install|load|pragma|call|read_csv|read_csv_auto|read_parquet|read_json|"
+        r"read_ndjson|read_blob|read_text|read_xlsx|read_xml|glob|httpfs|sqlite_scan|"
+        r"postgres_scan|mysql_scan|delta_scan|iceberg_scan|st_read|query_table)\b"
     )
     if (
         not (lowered.startswith("select ") or lowered.startswith("with "))
         or forbidden.search(lowered)
+        or re.search(r"(?:https?|s3|gs|azure)://", lowered)
         or ";" in normalized
     ):
         return _result(
