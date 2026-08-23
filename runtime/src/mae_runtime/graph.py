@@ -512,7 +512,10 @@ class _GraphRun:
         briefing, trace = self._json_call(
             node,
             "Generate visual executive briefing metadata for this agricultural dashboard. "
-            "Return a JSON object with keys: title, subtitle, insights, and visual_theme.\n"
+            "Honor every explicit presentation requirement in the original request. "
+            "Return a JSON object with keys: title, subtitle, insights, and visual_theme. "
+            "visual_theme must be an object with background and accent as six-digit hex colors.\n"
+            f"ORIGINAL REQUEST:\n{state['prompt']}\n"
             f"EVIDENCE SAMPLE:\n{json.dumps([item.model_dump(mode='json') for item in evidence[:10]])}",
         )
         attempts = state.get("dashboard_attempts", 0) + 1

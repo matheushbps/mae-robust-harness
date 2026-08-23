@@ -9,6 +9,7 @@ from mae_runtime.analytics import (
     execute_readonly_sql,
     profile_dataset,
     reconcile_evidence,
+    render_dashboard_html,
     run_python_analysis,
     run_sql_analysis,
 )
@@ -24,6 +25,7 @@ class StubModel:
 
     def __init__(self) -> None:
         self.systems: dict[str, str] = {}
+        self.users: dict[str, str] = {}
 
     def health(self) -> dict[str, Any]:
         return {"connected": True, "available": True, "model": self.model_id}
@@ -31,8 +33,9 @@ class StubModel:
     def complete_json(
         self, role: str, system: str, user: str, max_tokens: int | None = None
     ) -> tuple[dict[str, Any], LLMTrace]:
-        del user, max_tokens
+        del max_tokens
         self.systems[role] = system
+        self.users[role] = user
         if role in ("business_agent", "business_analyst"):
             payload = {
                 "business_questions": ["What changed?"],
@@ -63,8 +66,9 @@ class StubModel:
         return payload, LLMTrace(role=role, content="{}", completion_tokens=10)
 
     def complete(self, role: str, system: str, user: str, max_tokens: int | None = None) -> LLMTrace:
-        del user, max_tokens
+        del max_tokens
         self.systems[role] = system
+        self.users[role] = user
         return LLMTrace(
             role=role,
             content="Approved evidence [sql:40124:production_tonnes].",
@@ -192,6 +196,39 @@ def test_robust_langgraph_completes_with_checkpoints(dataset_path: Path, tmp_pat
     html_text = html_dashboard.read_text(encoding="utf-8")
     assert "<!DOCTYPE html>" in html_text
     assert 'id="kpis"' in html_text
+
+
+def test_robust_dashboard_agent_receives_the_original_visual_request(
+    dataset_path: Path, tmp_path: Path
+) -> None:
+    model = StubModel()
+    harness = RobustHarness(model, settings_for(tmp_path, dataset_path))
+
+    harness.run(
+        "robust-black-theme",
+        "[TASK:mae-certified-release-v2] Analyze the fixture. The dashboard should have a black background!",
+        lambda *_args: None,
+    )
+
+    assert "black background" in model.users["dashboard_agent"]
+
+
+def test_robust_dashboard_renderer_applies_structured_visual_theme() -> None:
+    rendered = render_dashboard_html(
+        {
+            "title": "Theme fixture",
+            "source": "Fixture",
+            "evidence": [],
+            "validation": [],
+        },
+        dashboard_briefing={
+            "title": "Theme fixture",
+            "visual_theme": {"background": "#ffffff", "accent": "#2563eb"},
+        },
+    )
+
+    assert "--bg: #ffffff;" in rendered
+    assert "--accent: #2563eb;" in rendered
 
 
 def test_robust_rejects_prompt_override_for_deterministic_role(

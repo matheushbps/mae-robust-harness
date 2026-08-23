@@ -271,6 +271,32 @@ def _metric_label(metric: str) -> str:
     return labels.get(metric, metric.replace("_", " ").title())
 
 
+def _dashboard_colors(briefing: dict[str, Any]) -> dict[str, str]:
+    visual_theme = briefing.get("visual_theme")
+    theme = visual_theme if isinstance(visual_theme, dict) else {}
+
+    def safe_hex(value: Any, default: str) -> str:
+        candidate = str(value or "").strip()
+        return candidate.lower() if re.fullmatch(r"#[0-9a-fA-F]{6}", candidate) else default
+
+    background = safe_hex(theme.get("background"), "#090d16")
+    red, green, blue = (int(background[index : index + 2], 16) for index in (1, 3, 5))
+    is_light = (0.2126 * red + 0.7152 * green + 0.0722 * blue) > 160
+    palette = theme.get("palette")
+    palette_accent = palette[0] if isinstance(palette, list) and palette else None
+    accent = safe_hex(theme.get("accent") or theme.get("accent_color") or palette_accent, "#38bdf8")
+    return {
+        "background": background,
+        "surface": "#ffffff" if is_light else "#111726",
+        "surface_border": "#cbd5e1" if is_light else "#1e293b",
+        "surface_hover": "#e2e8f0" if is_light else "#172033",
+        "text": "#0f172a" if is_light else "#f1f5f9",
+        "text_muted": "#475569" if is_light else "#94a3b8",
+        "accent": accent,
+        "accent_contrast": "#ffffff" if is_light else "#000000",
+    }
+
+
 def render_dashboard_html(
     payload: dict[str, Any],
     narrative: str | None = None,
@@ -285,6 +311,7 @@ def render_dashboard_html(
     harness_name = str(payload.get("harness", "MAE Agricultural Benchmark"))
     run_id = str(payload.get("run_id", "local-run"))
     created_at = str(payload.get("created_at", utc_now()))
+    colors = _dashboard_colors(briefing)
 
     # Aggregate metric summaries
     metric_totals: dict[str, dict[str, float]] = defaultdict(lambda: {"start": 0.0, "end": 0.0})
@@ -481,13 +508,14 @@ def render_dashboard_html(
   <title>{html.escape(title)} · Run Artifact</title>
   <style>
     :root {{
-      --bg: #090d16;
-      --surface: #111726;
-      --surface-border: #1e293b;
-      --surface-hover: #172033;
-      --text: #f1f5f9;
-      --text-muted: #94a3b8;
-      --accent: #38bdf8;
+      --bg: {colors['background']};
+      --surface: {colors['surface']};
+      --surface-border: {colors['surface_border']};
+      --surface-hover: {colors['surface_hover']};
+      --text: {colors['text']};
+      --text-muted: {colors['text_muted']};
+      --accent: {colors['accent']};
+      --accent-contrast: {colors['accent_contrast']};
       --accent-glow: rgba(56, 189, 248, 0.15);
       --positive: #10b981;
       --positive-glow: rgba(16, 185, 129, 0.15);
@@ -497,6 +525,7 @@ def render_dashboard_html(
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }}
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    html {{ background: var(--bg); }}
     body {{
       background: var(--bg);
       color: var(--text);
@@ -520,7 +549,7 @@ def render_dashboard_html(
       font-size: 1.75rem;
       font-weight: 700;
       letter-spacing: -0.02em;
-      color: #fff;
+      color: var(--text);
     }}
     .header-titles p {{
       color: var(--text-muted);
@@ -601,7 +630,7 @@ def render_dashboard_html(
       font-size: 1.75rem;
       font-weight: 700;
       margin: 0.5rem 0;
-      color: #fff;
+      color: var(--text);
       font-family: var(--mono);
     }}
     .kpi-unit {{
@@ -636,7 +665,7 @@ def render_dashboard_html(
     }}
     .filter-btn:hover, .filter-btn.active {{
       background: var(--accent);
-      color: #000;
+      color: var(--accent-contrast);
       border-color: var(--accent);
     }}
     .chart-container {{
@@ -746,7 +775,7 @@ def render_dashboard_html(
       padding: 0.85rem 1.1rem;
       border-radius: 0 8px 8px 0;
       font-size: 0.88rem;
-      color: #e2e8f0;
+      color: var(--text);
       line-height: 1.5;
     }}
 
