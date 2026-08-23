@@ -197,6 +197,21 @@ class AlwaysInvalidPythonModel(StubModel):
         return super().complete_json(role, system, user, max_tokens)
 
 
+class ExhaustingJsonModel(StubModel):
+    def complete_json(
+        self, role: str, system: str, user: str, max_tokens: int | None = None
+    ) -> tuple[dict[str, Any], LLMTrace]:
+        self.systems[role] = system
+        self.users[role] = user
+        if role == "sql_agent":
+            return {"code": TEMPORAL_SQL, "assumptions": []}, LLMTrace(
+                role=role, content="{}", completion_tokens=10
+            )
+        if role == "python_agent":
+            raise ValueError("The model returned invalid JSON: Expecting ',' delimiter.")
+        return super().complete_json(role, system, user, max_tokens)
+
+
 @pytest.fixture
 def dataset_path(tmp_path: Path) -> Path:
     path = tmp_path / "fixture.duckdb"
@@ -479,6 +494,24 @@ def test_robust_failed_temporal_release_keeps_prompt_visual_theme(
     assert result["failure_reason"]
     assert "--bg: #000000;" in html
     assert "black background" in html
+
+
+def test_robust_publishes_final_artifact_when_python_json_exhausts(
+    dataset_path: Path, tmp_path: Path
+) -> None:
+    settings = settings_for(tmp_path, full_temporal_fixture(tmp_path)).model_copy(
+        update={"max_repair_attempts": 1}
+    )
+    result = RobustHarness(ExhaustingJsonModel(), settings).run(
+        "robust-final-artifact-fallback",
+        "[TASK:mae-temporal-window-analysis-v3] Analyze the fixture. The dashboard should have a black background!",
+        lambda *_args: None,
+    )
+
+    artifact = tmp_path / "outputs/robust-final-artifact-fallback/dashboard.html"
+    assert artifact.exists()
+    assert result["artifacts"]
+    assert result["terminal_status"] == "failed"
 
 
 def test_branch_repair_context_guides_nullable_python_aggregation() -> None:
