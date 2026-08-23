@@ -129,7 +129,17 @@ def execute_generated_sql(
     )
 
 
-_ALLOWED_ATTRIBUTES = {"append", "get", "items", "keys", "setdefault", "sort", "values"}
+_ALLOWED_ATTRIBUTES = {
+    "append",
+    "extend",
+    "get",
+    "insert",
+    "items",
+    "keys",
+    "setdefault",
+    "sort",
+    "values",
+}
 _BLOCKED_NAMES = {
     "__import__",
     "breakpoint",

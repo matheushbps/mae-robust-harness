@@ -46,7 +46,9 @@ def temporal_generation_prompt(
             "Imports, lambda expressions, files, network, SQL results, and the national_crop_year "
             "view are unavailable. Use explicit loops instead of callback keys. Input rows contain "
             "municipality_code, crop_code, crop_name, year, planted_area_ha, harvested_area_ha, "
-            f"production_tonnes, and production_value_thousand_brl.\n{shared}"
+            f"production_tonnes, and production_value_thousand_brl. Numeric fields may be null; "
+            "skip nulls during aggregation and guard every running total, division, and update "
+            "against missing numeric values.\n{shared}"
         )
     raise ValueError(f"Unsupported temporal branch: {branch}")
 

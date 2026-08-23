@@ -180,6 +180,23 @@ class GeneratedRepairModel(StubModel):
         return super().complete_json(role, system, user, max_tokens)
 
 
+class AlwaysInvalidPythonModel(StubModel):
+    def complete_json(
+        self, role: str, system: str, user: str, max_tokens: int | None = None
+    ) -> tuple[dict[str, Any], LLMTrace]:
+        self.systems[role] = system
+        self.users[role] = user
+        if role == "sql_agent":
+            return {"code": TEMPORAL_SQL, "assumptions": []}, LLMTrace(
+                role=role, content="{}", completion_tokens=10
+            )
+        if role == "python_agent":
+            return {"code": "import math\ndef analyze(rows):\n    return []", "assumptions": []}, LLMTrace(
+                role=role, content="{}", completion_tokens=10
+            )
+        return super().complete_json(role, system, user, max_tokens)
+
+
 @pytest.fixture
 def dataset_path(tmp_path: Path) -> Path:
     path = tmp_path / "fixture.duckdb"
@@ -443,6 +460,45 @@ def test_robust_dashboard_renderer_shows_placeholder_when_no_data_is_released() 
 
     assert "No released data available" in rendered
     assert "0 ha" not in rendered
+
+
+def test_robust_failed_temporal_release_keeps_prompt_visual_theme(
+    dataset_path: Path, tmp_path: Path
+) -> None:
+    settings = settings_for(tmp_path, full_temporal_fixture(tmp_path)).model_copy(
+        update={"max_repair_attempts": 1}
+    )
+    result = RobustHarness(AlwaysInvalidPythonModel(), settings).run(
+        "robust-failed-black-theme",
+        "[TASK:mae-temporal-window-analysis-v3] Analyze the fixture. The dashboard should have a black background!",
+        lambda *_args: None,
+    )
+
+    html = (tmp_path / "outputs/robust-failed-black-theme/dashboard.html").read_text()
+    assert result["terminal_status"] == "failed"
+    assert result["failure_reason"]
+    assert "--bg: #000000;" in html
+    assert "black background" in html
+
+
+def test_branch_repair_context_guides_nullable_python_aggregation() -> None:
+    context = branch_repair_context(
+        "python",
+        "def analyze(rows):\n    return []",
+        [
+            {
+                "code": "python_execution_error",
+                "message": "Restricted Python execution failed.",
+                "details": {
+                    "error": "TypeError: unsupported operand type(s) for +=: 'float' and 'NoneType'"
+                },
+            }
+        ],
+    )
+
+    assert "NoneType" in context
+    assert "missing numeric values" in context.lower()
+    assert "guard every" in context.lower()
 
 
 def test_robust_repairs_only_rejected_sql_branch_and_preserves_python(tmp_path: Path) -> None:
