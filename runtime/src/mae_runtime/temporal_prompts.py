@@ -43,12 +43,15 @@ def temporal_generation_prompt(
         return (
             "Generate an independent pure-Python implementation. Return keys code and assumptions. "
             f"code must define analyze(rows) and return dictionaries with exactly: {columns}. "
-            "Imports, lambda expressions, files, network, SQL results, and the national_crop_year "
-            "view are unavailable. Use explicit loops instead of callback keys. Input rows contain "
+            "Files, network, SQL results, and the national_crop_year view are unavailable. Use "
+            "explicit loops where practical; pure in-memory lambda expressions are allowed but "
+            "must not access external state. Input rows contain "
             "municipality_code, crop_code, crop_name, year, planted_area_ha, harvested_area_ha, "
             f"production_tonnes, and production_value_thousand_brl. Numeric fields may be null; "
             "skip nulls during aggregation and guard every running total, division, and update "
-            "against missing numeric values.\n{shared}"
+            "against missing numeric values. For production_rank, use DENSE_RANK semantics: rank "
+            "distinct production values descending within each year, assign the same rank to ties, "
+            "and increment the rank by one per distinct value (never by the number of tied rows).\n{shared}"
         )
     raise ValueError(f"Unsupported temporal branch: {branch}")
 

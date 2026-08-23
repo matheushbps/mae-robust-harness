@@ -191,7 +191,6 @@ def _python_safety_diagnostic(code: str) -> BranchDiagnostic | None:
         ast.Global,
         ast.Import,
         ast.ImportFrom,
-        ast.Lambda,
         ast.Nonlocal,
         ast.With,
     )

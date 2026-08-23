@@ -77,6 +77,19 @@ def analyze(rows):
     assert result.rows[0]["total"] > 0
 
 
+def test_accepts_pure_in_memory_lambda_in_restricted_python(dataset_path: Path) -> None:
+    result = execute_generated_python(
+        dataset_path,
+        """
+def analyze(rows):
+    values = [row["production_tonnes"] for row in rows]
+    return [{"maximum": max(values, key=lambda value: value)}]
+""",
+    )
+    assert result.status == "completed"
+    assert result.rows[0]["maximum"] > 0
+
+
 @pytest.mark.parametrize(
     ("code", "diagnostic"),
     [

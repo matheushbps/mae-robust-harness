@@ -566,6 +566,23 @@ def test_branch_repair_context_guides_nullable_python_aggregation() -> None:
     assert "guard every" in context.lower()
 
 
+def test_branch_repair_context_guides_dense_rank_repair() -> None:
+    context = branch_repair_context(
+        "python",
+        "def analyze(rows):\n    return []",
+        [
+            {
+                "code": "invalid_rank",
+                "message": "Production rank is inconsistent with descending annual production.",
+            }
+        ],
+    )
+
+    assert "dense rank" in context.lower()
+    assert "within each year" in context.lower()
+    assert "never increment by tie count" in context.lower()
+
+
 def test_robust_repairs_only_rejected_sql_branch_and_preserves_python(tmp_path: Path) -> None:
     dataset = full_temporal_fixture(tmp_path)
     model = GeneratedRepairModel()

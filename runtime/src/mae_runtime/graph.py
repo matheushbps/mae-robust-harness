@@ -103,7 +103,14 @@ def branch_repair_context(
             )
         if "lambda" in diagnostic_blob:
             targeted_guidance.append(
-                "Use explicit loops and named helpers instead of lambda expressions."
+                "Lambda expressions are permitted only for pure in-memory operations; do not use "
+                "them for file, network, import, or dynamic execution behavior."
+            )
+        if "invalid_rank" in diagnostic_blob:
+            targeted_guidance.append(
+                "Production rank must be dense rank (DENSE_RANK) within each year: sort distinct production "
+                "values descending, assign the same rank to ties, and increment by one for each "
+                "distinct value; never increment by tie count and never rank across years."
             )
     guidance_text = f" {' '.join(targeted_guidance)}" if targeted_guidance else ""
     return (
