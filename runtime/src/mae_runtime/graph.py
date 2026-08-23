@@ -165,7 +165,9 @@ class _GraphRun:
         )
         return msg
 
-    def _json_call(self, role_id: str, user: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _json_call(
+        self, role_id: str, user: str, max_tokens: int = 1024
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         last_error: Exception | None = None
         for attempt in range(self.settings.max_repair_attempts + 1):
             try:
@@ -173,6 +175,7 @@ class _GraphRun:
                     role=role_id,
                     system=self._system_prompt(role_id) + "\n\nReturn one valid JSON object and no markdown.",
                     user=user,
+                    max_tokens=max_tokens,
                 )
                 return payload, self._trace_metadata(trace)
             except Exception as error:  # noqa: BLE001
